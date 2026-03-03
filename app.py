@@ -17,17 +17,7 @@ API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=API_KEY)
 
 def get_best_model():
-    valid_models = []
-    try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                valid_models.append(m.name)
-        for m in valid_models:
-            if 'flash' in m.lower():
-                return m
-        return valid_models[0] if valid_models else None
-    except:
-        return None
+    return "gemini-1.5-flash"
 
 def add_months(sourcedate, months):
     month = sourcedate.month - 1 + months
@@ -213,3 +203,4 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             use_container_width=True
 
         )
+
