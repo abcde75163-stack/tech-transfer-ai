@@ -13,7 +13,7 @@ import re
 # ==========================================
 # 1. API 설정 및 기본 함수
 # ==========================================
-API_KEY = st.serets["AIzaSyBp6LHPlliMaqGBu2_2_JE3QqX-3Q8DAuI"]
+API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=API_KEY)
 
 def get_best_model():
@@ -211,4 +211,5 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             file_name="기술이전_대량추출_통합결과(복잡기술료반영).xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
+
         )
