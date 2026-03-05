@@ -166,7 +166,7 @@ with col2:
     biz_files = st.file_uploader("2. 사업자등록증 업로드 (선택, 여러 개 동시 선택 가능) 🏢", type=['pdf'], accept_multiple_files=True)
 
 if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
-   if not contract_files:
+    if not contract_files:
         st.error("⚠️ 최소 1개 이상의 기술이전계약서 PDF를 업로드해 주세요!")
     else:
         model_name = get_best_model()
@@ -273,5 +273,6 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
+
 
 
