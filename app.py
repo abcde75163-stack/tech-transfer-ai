@@ -166,7 +166,7 @@ with col2:
     biz_files = st.file_uploader("2. 사업자등록증 업로드 (선택, 여러 개 동시 선택 가능) 🏢", type=['pdf'], accept_multiple_files=True)
 
 if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
-    if not contract_files:
+   if not contract_files:
         st.error("⚠️ 최소 1개 이상의 기술이전계약서 PDF를 업로드해 주세요!")
     else:
         model_name = get_best_model()
@@ -200,11 +200,8 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             
             progress_bar.progress((i + 1) / len(contract_files))
             
-  status_text.success("🎉 모든 파일의 분석이 완료되었습니다!")
+        status_text.success("🎉 모든 파일의 분석이 완료되었습니다!")
         
-        # ==========================================
-        # 엑셀 마스터 양식 완벽 맞춤 처리 (업데이트)
-        # ==========================================
         # 1. 100여 개의 실제 실무 양식 헤더 전체 정의
         target_columns = [
             "1.연번", "2.기술이전계약일", "3.기관(업체)명", "4.기관(업체)명2", "5.기관유형", "6.업종유형",
@@ -233,8 +230,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
         # 2. AI 추출 항목을 실무 양식 열에 매핑
         final_data_list = []
         for d in all_extracted_data:
-            row_dict = {col: "" for col in target_columns} # 일단 전부 빈칸으로 초기화
-            
+            row_dict = {col: "" for col in target_columns}
             row_dict["2.기술이전계약일"] = d.get("1. 기술이전계약일", "")
             row_dict["3.기관(업체)명"] = d.get("2. 회사명", "")
             row_dict["11. 대표주소"] = d.get("3. 회사 주소", "")
@@ -257,39 +253,26 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             row_dict["담당자"] = d.get("20. 학교 업무담당자 성명", "")
             row_dict["35.지식재산권 번호"] = d.get("21. 특허출원(등록)번호", "")
             row_dict["원본 파일명"] = d.get("0. 원본 파일명", "")
-            
             final_data_list.append(row_dict)
             
         df = pd.DataFrame(final_data_list, columns=target_columns)
         st.dataframe(df)
 
-        # 3. 엑셀 파일 생성
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
             df.to_excel(writer, index=False, sheet_name='추출정보')
-            
-            # 서식 적용
             workbook = writer.book
             worksheet = writer.sheets['추출정보']
-            header_format = workbook.add_format({
-                'bold': True, 'border': 1, 'bg_color': '#D9D9D9',
-                'align': 'center', 'valign': 'vcenter'
-            })
-            
+            header_format = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#D9D9D9', 'align': 'center'})
             for col_num, value in enumerate(df.columns.values):
                 worksheet.write(0, col_num, value, header_format)
-                # 데이터가 들어가는 주요 열 너비 넓히기
-                if value in ["27.기술명", "11. 대표주소", "35.지식재산권 번호", "정액기술료 납부방법(상세)", "48.경상기술료"]:
-                    worksheet.set_column(col_num, col_num, 30)
-                else:
-                    worksheet.set_column(col_num, col_num, 15)
+                worksheet.set_column(col_num, col_num, 20)
         
         st.download_button(
             label="📥 마스터 엑셀 파일 다운로드",
             data=buffer.getvalue(),
             file_name="기술이전_대량추출_마스터양식.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True)
-
-
+            use_container_width=True
+        )
 
