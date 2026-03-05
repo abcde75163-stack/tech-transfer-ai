@@ -289,6 +289,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             data=buffer.getvalue(),
             file_name="기술이전_대량추출_마스터양식.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+            use_container_width=True)
+
 
 
