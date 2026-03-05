@@ -202,7 +202,6 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             
         status_text.success("🎉 모든 파일의 분석이 완료되었습니다!")
         
-        # 1. 100여 개의 실제 실무 양식 헤더 전체 정의
         target_columns = [
             "1.연번", "2.기술이전계약일", "3.기관(업체)명", "4.기관(업체)명2", "5.기관유형", "6.업종유형",
             "7.국내/국외", "8. 국가명(국외의 경우)", "9.국내지역구분", "10. 사업자등록번호", "11. 대표주소",
@@ -227,7 +226,6 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             "납부기한", "담당자", "담당자(연구원)", "원본 파일명", "정액기술료 납부방법(상세)"
         ]
 
-        # 2. AI 추출 항목을 실무 양식 열에 매핑
         final_data_list = []
         for d in all_extracted_data:
             row_dict = {col: "" for col in target_columns}
@@ -275,4 +273,5 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
+
 
