@@ -200,25 +200,77 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             
             progress_bar.progress((i + 1) / len(contract_files))
             
-        status_text.success("🎉 모든 파일의 분석이 완료되었습니다!")
+     status_text.success("🎉 모든 파일의 분석이 완료되었습니다!")
         
+        # ==========================================
+        # 엑셀 양식 완벽 맞춤 처리 (새로 추가된 부분)
+        # ==========================================
+        # 1. AI가 뽑은 항목 이름을 엑셀 양식과 동일하게 짝짓기
+        column_mapping = {
+            "1. 기술이전계약일": "기술이전계약일",
+            "2. 회사명": "회사명",
+            "3. 회사 주소": "회사주소",
+            "4. 회사 대표명": "회사대표명",
+            "5. 사업자등록번호": "사업자번호",
+            "6. 지역구분": "지역구분",
+            "7. 회사 업무담당자 성명": "회사 업무담당자 성명",
+            "8. 회사 업무 담당자 이메일": "회사 업무담당자 이메일",
+            "9. 회사 업무 담당자 번호": "회사 업무담당자 번호",
+            "10. 기술이전계약명": "계약명",
+            "11. 기술이전책임자명": "기술이전책임자",
+            "12. 학과": "학과",
+            "13. 기술유형": "기술유형",
+            "14. 거래유형": "거래유형",
+            "15. 계약기간": "계약기간",
+            "16. 기술료 유형": "기술료 유형",
+            "17. 총 정액기술료(단위: 원)": "정액기술료(단위: 원)",
+            "20. 학교 업무담당자 성명": "학교 업무담당자 성명",
+            # 신규 추가한 복잡한 기술료 조건 등은 양식 맨 뒤에 자연스럽게 배치
+            "18. 정액기술료 납부방법": "정액기술료 납부방법",
+            "19. 경상기술료(Running Royalty) 조건": "경상기술료 조건",
+            "21. 특허출원(등록)번호": "특허출원(등록)번호",
+            "0. 원본 파일명": "원본 파일명"
+        }
+        
+        # 2. 데이터프레임 변환 및 컬럼명, 순서 맞추기
         df = pd.DataFrame(all_extracted_data)
-        cols = ['0. 원본 파일명'] + [c for c in df.columns if c != '0. 원본 파일명']
-        df = df[cols]
+        df = df.rename(columns=column_mapping)
+        ordered_cols = list(column_mapping.values())
         
-        st.dataframe(df)
+        # 혹시 누락된 컬럼이 있으면 빈칸으로 채워서 에러 방지
+        for col in ordered_cols:
+            if col not in df.columns:
+                df[col] = ""
+        df = df[ordered_cols]
+        
+        st.dataframe(df) # 화면에 먼저 보여주기
 
+        # 3. 엑셀 파일 생성 (위 2줄, 왼쪽 3칸 띄우기 적용)
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False, sheet_name='대량추출결과')
+            # startrow=2 (3번째 줄부터), startcol=3 (D열부터)
+            df.to_excel(writer, index=False, sheet_name='Sheet1', startrow=2, startcol=3)
+            
+            # 엑셀 헤더(제목줄) 디자인 예쁘게 입히기
+            workbook = writer.book
+            worksheet = writer.sheets['Sheet1']
+            header_format = workbook.add_format({
+                'bold': True, 'border': 1, 'bg_color': '#D9D9D9',
+                'align': 'center', 'valign': 'vcenter'
+            })
+            
+            # 서식 적용 및 칸 너비 넓히기
+            for col_num, value in enumerate(df.columns.values):
+                worksheet.write(2, col_num + 3, value, header_format)
+                worksheet.set_column(col_num + 3, col_num + 3, 18) 
         
         st.download_button(
-            label="📥 통합 엑셀 파일 다운로드",
+            label="📥 맞춤형 엑셀 파일 다운로드",
             data=buffer.getvalue(),
-            file_name="기술이전_대량추출_통합결과(복잡기술료반영).xlsx",
+            file_name="기술이전_대량추출_맞춤양식.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
-
         )
+
 
 
