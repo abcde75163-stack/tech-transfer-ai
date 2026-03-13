@@ -324,10 +324,6 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
         # 엑셀 파일 생성
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-
-        # 엑셀 파일 생성
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
             df.to_excel(writer, index=False, sheet_name='추출정보')
             workbook = writer.book
             worksheet = writer.sheets['추출정보']
@@ -344,6 +340,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
+
 
 
 
