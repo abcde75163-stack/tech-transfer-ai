@@ -13,19 +13,15 @@ import re
 # ==========================================
 # 1. API 설정 및 기본 함수
 # ==========================================
-# Streamlit secrets에서 API 키를 가져옵니다.
 API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=API_KEY)
 
 def get_best_model():
-    """사용 가능한 최적의 Gemini 모델을 반환합니다."""
     try:
         valid_models = []
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
                 valid_models.append(m.name)
-        
-        # 1순위: flash 모델, 2순위: pro 모델
         for m in valid_models:
             if 'flash' in m.lower():
                 return m
@@ -34,19 +30,15 @@ def get_best_model():
         return "models/gemini-pro"
 
 def format_company_name(name):
-    """'주식회사'를 '(주)'로 일괄 변환합니다. (주식회사 OO, OO 주식회사 대응)"""
+    """'주식회사'를 '(주)'로 변환합니다."""
     if not name:
         return ""
-    # '주식회사 ' 또는 ' 주식회사'를 '(주)'로 변환
-    # 앞뒤 공백 처리 및 다양한 위치의 주식회사 문자열 대응
     name = re.sub(r'주식회사\s*', '(주)', name)
     name = re.sub(r'\s*주식회사', '(주)', name)
-    # (주)(주)가 생기는 경우 방지
     name = name.replace('(주)(주)', '(주)')
     return name.strip()
 
 def add_months(sourcedate, months):
-    """날짜에 특정 개월 수를 더합니다."""
     month = sourcedate.month - 1 + months
     year = sourcedate.year + month // 12
     month = month % 12 + 1
@@ -54,12 +46,10 @@ def add_months(sourcedate, months):
     return datetime.date(year, month, day)
 
 def calculate_exact_period(start_date_str, period_str):
-    """계약 시작일과 기간(년/월)을 바탕으로 종료일을 계산합니다."""
     try:
         start_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
         year_match = re.search(r"(\d+)\s*년", period_str)
         month_match = re.search(r"(\d+)\s*(?:개월|월)", period_str)
-
         if year_match:
             end_date = add_months(start_date, int(year_match.group(1)) * 12) - datetime.timedelta(days=1)
             return f"{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}"
@@ -71,15 +61,12 @@ def calculate_exact_period(start_date_str, period_str):
     return period_str
 
 def extract_with_gemini(contract_path, biz_reg_path, model_name):
-    """Gemini를 사용하여 PDF에서 데이터를 추출합니다."""
     model = genai.GenerativeModel(model_name)
     uploaded_files = []
-    
     try:
         c_file = genai.upload_file(path=contract_path)
         uploaded_files.append(c_file)
         time.sleep(2)
-        
         if biz_reg_path:
             b_file = genai.upload_file(path=biz_reg_path)
             uploaded_files.append(b_file)
@@ -89,38 +76,37 @@ def extract_with_gemini(contract_path, biz_reg_path, model_name):
             docs_to_analyze = [c_file]
 
         prompt = """
-        첨부된 문서를 분석하여 아래 21개 항목의 정보를 추출해 줘. (사업자등록증이 없다면 계약서 내용만으로 최대한 유추할 것)
+        첨부된 문서를 분석하여 아래 21개 항목의 정보를 추출해 줘. 
         반드시 마크다운 기호 없이 순수 JSON 형식으로만 답변해야 해. 정보가 없으면 빈 문자열("") 입력.
         
         {
             "1. 기술이전계약일": "YYYY-MM-DD",
-            "2. 회사명": "계약 상대방인 업체명을 기재",
-            "3. 회사 주소": "괄호 안의 건물명 제외 지번/도로명까지",
+            "2. 회사명": "계약 상대방 업체명",
+            "3. 회사 주소": "",
             "4. 회사 대표명": "",
             "5. 사업자등록번호": "000-00-00000",
-            "6. 지역구분": "부산, 서울 등",
+            "6. 지역구분": "",
             "7. 회사 업무담당자 성명": "",
             "8. 회사 업무 담당자 이메일": "",
-            "9. 회사 업무 담당자 번호": "010-0000-0000",
+            "9. 회사 업무 담당자 번호": "",
             "10. 기술이전계약명": "",
             "11. 기술이전책임자명": "",
             "12. 학과": "",
-            "13. 기술유형": "'특허', '노하우', '자문', '저작권' 이 4개 중 하나만 선택해서 기재",
-            "14. 거래유형": "독점 통상실시권, 비독점 통상실시권, 전용실시권, 특허양도 등 계약서 상의 거래 형태 기재",
-            "15. 계약기간": "계약서에 명시된 계약기간 기재 (예: '3년', '48개월', 또는 'YYYY.MM.DD~YYYY.MM.DD')",
-            "16. 기술료 유형": "계약서 내용을 바탕으로 '정액기술료', '경상기술료', '혼합형(정액+경상)' 중 하나 기재",
-            "17. 총 정액기술료(단위: 원)": "분할납부 조건이더라도 모두 합친 '총액'을 숫자만 기재 (콤마 제외), 없으면 0",
-            "18. 정액기술료 납부방법": "일시불인지, 혹은 '선금 OOO원, 중도금 OOO원(조건)' 등 분할 납부 스케줄과 조건이 있다면 상세히 요약 기재. 없으면 해당없음",
-            "19. 경상기술료(Running Royalty) 조건": "순매출액의 X% 등 경상기술료 조건이 명시되어 있다면 상세 기재, 없으면 '해당없음'",
+            "13. 기술유형": "",
+            "14. 거래유형": "",
+            "15. 계약기간": "",
+            "16. 기술료 유형": "",
+            "17. 총 정액기술료(단위: 원)": "",
+            "18. 정액기술료 납부방법": "",
+            "19. 경상기술료(Running Royalty) 조건": "",
             "20. 학교 업무담당자 성명": "",
-            "21. 특허출원(등록)번호": "계약서 상에 특허출원번호나 등록번호가 명시되어 있으면 모두 기재, 없으면 빈 문자열"
+            "21. 특허출원(등록)번호": ""
         }
         """
         docs_to_analyze.append(prompt)
-
         response = model.generate_content(docs_to_analyze, request_options={"timeout": 600})
         result_text = response.text.strip()
-        
+        if result_text.startswith("
         max_retries = 2
         for attempt in range(max_retries):
             try:
@@ -287,6 +273,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
+
 
 
 
