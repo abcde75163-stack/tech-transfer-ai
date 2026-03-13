@@ -13,30 +13,40 @@ import re
 # ==========================================
 # 1. API 설정 및 기본 함수
 # ==========================================
+# Streamlit secrets에서 API 키를 가져옵니다.
 API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=API_KEY)
 
 def get_best_model():
+    """사용 가능한 최적의 Gemini 모델을 반환합니다."""
     try:
         valid_models = []
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
                 valid_models.append(m.name)
-                
-        # 1순위: 가장 빠르고 최신인 flash 모델 찾기
+        
+        # 1순위: flash 모델, 2순위: pro 모델
         for m in valid_models:
             if 'flash' in m.lower():
                 return m
-                
-        # 2순위: flash가 없으면 사용 가능한 아무 모델이나 사용
-        if valid_models:
-            return valid_models[0]
-        else:
-            return "models/gemini-pro"
-    except Exception as e:
+        return valid_models[0] if valid_models else "models/gemini-pro"
+    except Exception:
         return "models/gemini-pro"
 
+def format_company_name(name):
+    """'주식회사'를 '(주)'로 일괄 변환합니다. (주식회사 OO, OO 주식회사 대응)"""
+    if not name:
+        return ""
+    # '주식회사 ' 또는 ' 주식회사'를 '(주)'로 변환
+    # 앞뒤 공백 처리 및 다양한 위치의 주식회사 문자열 대응
+    name = re.sub(r'주식회사\s*', '(주)', name)
+    name = re.sub(r'\s*주식회사', '(주)', name)
+    # (주)(주)가 생기는 경우 방지
+    name = name.replace('(주)(주)', '(주)')
+    return name.strip()
+
 def add_months(sourcedate, months):
+    """날짜에 특정 개월 수를 더합니다."""
     month = sourcedate.month - 1 + months
     year = sourcedate.year + month // 12
     month = month % 12 + 1
@@ -44,6 +54,7 @@ def add_months(sourcedate, months):
     return datetime.date(year, month, day)
 
 def calculate_exact_period(start_date_str, period_str):
+    """계약 시작일과 기간(년/월)을 바탕으로 종료일을 계산합니다."""
     try:
         start_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
         year_match = re.search(r"(\d+)\s*년", period_str)
@@ -60,6 +71,7 @@ def calculate_exact_period(start_date_str, period_str):
     return period_str
 
 def extract_with_gemini(contract_path, biz_reg_path, model_name):
+    """Gemini를 사용하여 PDF에서 데이터를 추출합니다."""
     model = genai.GenerativeModel(model_name)
     uploaded_files = []
     
@@ -76,14 +88,13 @@ def extract_with_gemini(contract_path, biz_reg_path, model_name):
         else:
             docs_to_analyze = [c_file]
 
-        # [수정됨] 실무 맞춤형 21개 항목으로 확장 및 기술료 조건 세분화
         prompt = """
         첨부된 문서를 분석하여 아래 21개 항목의 정보를 추출해 줘. (사업자등록증이 없다면 계약서 내용만으로 최대한 유추할 것)
         반드시 마크다운 기호 없이 순수 JSON 형식으로만 답변해야 해. 정보가 없으면 빈 문자열("") 입력.
         
         {
             "1. 기술이전계약일": "YYYY-MM-DD",
-            "2. 회사명": "",
+            "2. 회사명": "계약 상대방인 업체명을 기재",
             "3. 회사 주소": "괄호 안의 건물명 제외 지번/도로명까지",
             "4. 회사 대표명": "",
             "5. 사업자등록번호": "000-00-00000",
@@ -107,6 +118,9 @@ def extract_with_gemini(contract_path, biz_reg_path, model_name):
         """
         docs_to_analyze.append(prompt)
 
+        response = model.generate_content(docs_to_analyze, request_options={"timeout": 600})
+        result_text = response.text.strip()
+        
         max_retries = 2
         for attempt in range(max_retries):
             try:
@@ -273,6 +287,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
+
 
 
 
