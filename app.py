@@ -17,6 +17,7 @@ API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=API_KEY)
 
 def get_best_model():
+    """사용 가능한 모델 중 가장 적합한 모델(Flash 우선)을 찾습니다."""
     try:
         valid_models = []
         for m in genai.list_models():
@@ -30,11 +31,13 @@ def get_best_model():
         return "models/gemini-pro"
 
 def format_company_name(name):
-    """'주식회사'를 '(주)'로 변환합니다."""
+    """'주식회사'를 '(주)'로 자동 변환합니다."""
     if not name:
         return ""
+    # 주식회사 문구를 (주)로 치환 (앞, 뒤 공백 포함 모두 대응)
     name = re.sub(r'주식회사\s*', '(주)', name)
     name = re.sub(r'\s*주식회사', '(주)', name)
+    # 혹시 모를 (주)(주) 중복 방지
     name = name.replace('(주)(주)', '(주)')
     return name.strip()
 
@@ -46,10 +49,12 @@ def add_months(sourcedate, months):
     return datetime.date(year, month, day)
 
 def calculate_exact_period(start_date_str, period_str):
+    """계약 시작일과 기간을 바탕으로 정확한 날짜 범위를 계산합니다."""
     try:
         start_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
         year_match = re.search(r"(\d+)\s*년", period_str)
         month_match = re.search(r"(\d+)\s*(?:개월|월)", period_str)
+
         if year_match:
             end_date = add_months(start_date, int(year_match.group(1)) * 12) - datetime.timedelta(days=1)
             return f"{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}"
@@ -61,12 +66,15 @@ def calculate_exact_period(start_date_str, period_str):
     return period_str
 
 def extract_with_gemini(contract_path, biz_reg_path, model_name):
+    """Gemini API를 사용하여 PDF 파일에서 21개 항목을 추출합니다."""
     model = genai.GenerativeModel(model_name)
     uploaded_files = []
+    
     try:
         c_file = genai.upload_file(path=contract_path)
         uploaded_files.append(c_file)
         time.sleep(2)
+        
         if biz_reg_path:
             b_file = genai.upload_file(path=biz_reg_path)
             uploaded_files.append(b_file)
@@ -76,37 +84,36 @@ def extract_with_gemini(contract_path, biz_reg_path, model_name):
             docs_to_analyze = [c_file]
 
         prompt = """
-        첨부된 문서를 분석하여 아래 21개 항목의 정보를 추출해 줘. 
+        첨부된 문서를 분석하여 아래 21개 항목의 정보를 추출해 줘. (사업자등록증이 없다면 계약서 내용만으로 최대한 유추할 것)
         반드시 마크다운 기호 없이 순수 JSON 형식으로만 답변해야 해. 정보가 없으면 빈 문자열("") 입력.
         
         {
             "1. 기술이전계약일": "YYYY-MM-DD",
             "2. 회사명": "계약 상대방 업체명",
-            "3. 회사 주소": "",
+            "3. 회사 주소": "괄호 안의 건물명 제외 지번/도로명까지",
             "4. 회사 대표명": "",
             "5. 사업자등록번호": "000-00-00000",
-            "6. 지역구분": "",
+            "6. 지역구분": "부산, 서울 등",
             "7. 회사 업무담당자 성명": "",
             "8. 회사 업무 담당자 이메일": "",
-            "9. 회사 업무 담당자 번호": "",
+            "9. 회사 업무 담당자 번호": "010-0000-0000",
             "10. 기술이전계약명": "",
             "11. 기술이전책임자명": "",
             "12. 학과": "",
-            "13. 기술유형": "",
-            "14. 거래유형": "",
-            "15. 계약기간": "",
-            "16. 기술료 유형": "",
-            "17. 총 정액기술료(단위: 원)": "",
-            "18. 정액기술료 납부방법": "",
-            "19. 경상기술료(Running Royalty) 조건": "",
+            "13. 기술유형": "'특허', '노하우', '자문', '저작권' 이 4개 중 하나만 선택해서 기재",
+            "14. 거래유형": "독점 통상실시권, 비독점 통상실시권, 전용실시권, 특허양도 등 계약서 상의 거래 형태 기재",
+            "15. 계약기간": "계약서에 명시된 계약기간 기재 (예: '3년', '48개월', 또는 'YYYY.MM.DD~YYYY.MM.DD')",
+            "16. 기술료 유형": "계약서 내용을 바탕으로 '정액기술료', '경상기술료', '혼합형(정액+경상)' 중 하나 기재",
+            "17. 총 정액기술료(단위: 원)": "분할납부 조건이더라도 모두 합친 '총액'을 숫자만 기재 (콤마 제외), 없으면 0",
+            "18. 정액기술료 납부방법": "일시불인지, 혹은 '선금 OOO원, 중도금 OOO원(조건)' 등 분할 납부 스케줄과 조건이 있다면 상세히 요약 기재. 없으면 해당없음",
+            "19. 경상기술료(Running Royalty) 조건": "순매출액의 X% 등 경상기술료 조건이 명시되어 있다면 상세 기재, 없으면 '해당없음'",
             "20. 학교 업무담당자 성명": "",
-            "21. 특허출원(등록)번호": ""
+            "21. 특허출원(등록)번호": "계약서 상에 특허출원번호나 등록번호가 명시되어 있으면 모두 기재, 없으면 빈 문자열"
         }
         """
         docs_to_analyze.append(prompt)
-        response = model.generate_content(docs_to_analyze, request_options={"timeout": 600})
-        result_text = response.text.strip()
-       
+
+        # 재시도 로직 포함 (API Limit 에러 대응)
         max_retries = 2
         for attempt in range(max_retries):
             try:
@@ -119,13 +126,26 @@ def extract_with_gemini(contract_path, biz_reg_path, model_name):
                         continue
                 raise e
 
+        # JSON 텍스트 파싱 (마크다운 기호로 인한 절삭 방지 처리)
         result_text = response.text.strip()
-        if result_text.startswith("```json"): result_text = result_text[7:]
-        if result_text.endswith("```"): result_text = result_text[:-3]
+        md_json = "`" * 3 + "json"
+        md_end = "`" * 3
+        
+        if result_text.startswith(md_json): 
+            result_text = result_text[7:]
+        elif result_text.startswith(md_end):
+            result_text = result_text[3:]
+            
+        if result_text.endswith(md_end): 
+            result_text = result_text[:-3]
             
         extracted_data = json.loads(result_text.strip())
         
-        # 계약기간 및 특허양도 후처리 로직 유지
+        # [데이터 후처리] 주식회사 -> (주) 변환 적용
+        if "2. 회사명" in extracted_data:
+            extracted_data["2. 회사명"] = format_company_name(extracted_data["2. 회사명"])
+
+        # [데이터 후처리] 계약기간 및 특허양도 기간 계산
         tech_type = extracted_data.get("13. 기술유형", "")
         start_date = extracted_data.get("1. 기술이전계약일", "")
         raw_period = extracted_data.get("15. 계약기간", "")
@@ -155,15 +175,16 @@ st.set_page_config(page_title="기술이전 대량 자동 추출기", page_icon=
 
 st.title("📑 기술이전계약서 대량 일괄 추출 시스템")
 st.markdown("""
-계약서와 사업자등록증을 업로드하면 AI가 분석하여 **21개 세부 항목**을 엑셀로 자동 정리해 줍니다.
-* **✨ 신규 기능:** 선금/중도금/잔금 등 복잡한 **분할납부 조건**과 매출 연동형 **경상기술료(Running Royalty)** 조건까지 한 번에 찾아내어 표기합니다!
+계약서와 사업자등록증을 업로드하면 AI가 분석하여 데이터를 엑셀로 자동 정리합니다.
+* **3번 열 [기관(업체)명]:** '부산대학교 산학협력단'으로 고정됩니다.
+* **4번 열 [기관(업체)명2]:** 추출된 상대 업체의 이름이 '(주)'로 정리되어 입력됩니다.
 """)
 
 col1, col2 = st.columns(2)
 with col1:
-    contract_files = st.file_uploader("1. 기술이전계약서 업로드 (여러 개 동시 선택 가능) 📄", type=['pdf'], accept_multiple_files=True)
+    contract_files = st.file_uploader("1. 기술이전계약서 업로드 (PDF) 📄", type=['pdf'], accept_multiple_files=True)
 with col2:
-    biz_files = st.file_uploader("2. 사업자등록증 업로드 (선택, 여러 개 동시 선택 가능) 🏢", type=['pdf'], accept_multiple_files=True)
+    biz_files = st.file_uploader("2. 사업자등록증 업로드 (PDF) 🏢", type=['pdf'], accept_multiple_files=True)
 
 if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
     if not contract_files:
@@ -183,7 +204,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
                 c_path = tmp_c.name
             
             b_path = ""
-            if biz_files and len(biz_files) == len(contract_files):
+            if biz_files and len(biz_files) > i:
                 b_file = biz_files[i]
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_b:
                     tmp_b.write(b_file.read())
@@ -202,6 +223,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             
         status_text.success("🎉 모든 파일의 분석이 완료되었습니다!")
         
+        # 다운로드할 엑셀의 컬럼 목록 (순서 유지)
         target_columns = [
             "1.연번", "2.기술이전계약일", "3.기관(업체)명", "4.기관(업체)명2", "5.기관유형", "6.업종유형",
             "7.국내/국외", "8. 국가명(국외의 경우)", "9.국내지역구분", "10. 사업자등록번호", "11. 대표주소",
@@ -227,10 +249,20 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
         ]
 
         final_data_list = []
-        for d in all_extracted_data:
+        for idx, d in enumerate(all_extracted_data):
             row_dict = {col: "" for col in target_columns}
+            
+            row_dict["1.연번"] = idx + 1
             row_dict["2.기술이전계약일"] = d.get("1. 기술이전계약일", "")
-            row_dict["3.기관(업체)명"] = d.get("2. 회사명", "")
+            
+            # --- [핵심 로직 적용 구간] ---
+            # 3번 열: '부산대학교 산학협력단' 텍스트 고정
+            row_dict["3.기관(업체)명"] = "부산대학교 산학협력단"
+            
+            # 4번 열: AI가 추출하고 (주)로 변환된 업체명 입력
+            row_dict["4.기관(업체)명2"] = d.get("2. 회사명", "")
+            # -----------------------------
+            
             row_dict["11. 대표주소"] = d.get("3. 회사 주소", "")
             row_dict["13. 대표자성명"] = d.get("4. 회사 대표명", "")
             row_dict["10. 사업자등록번호"] = d.get("5. 사업자등록번호", "")
@@ -251,11 +283,13 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             row_dict["담당자"] = d.get("20. 학교 업무담당자 성명", "")
             row_dict["35.지식재산권 번호"] = d.get("21. 특허출원(등록)번호", "")
             row_dict["원본 파일명"] = d.get("0. 원본 파일명", "")
+            
             final_data_list.append(row_dict)
             
         df = pd.DataFrame(final_data_list, columns=target_columns)
         st.dataframe(df)
 
+        # 엑셀 파일 생성
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
             df.to_excel(writer, index=False, sheet_name='추출정보')
@@ -264,17 +298,16 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             header_format = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#D9D9D9', 'align': 'center'})
             for col_num, value in enumerate(df.columns.values):
                 worksheet.write(0, col_num, value, header_format)
-                worksheet.set_column(col_num, col_num, 20)
+                worksheet.set_column(col_num, col_num, 18)
         
+        # 다운로드 버튼
         st.download_button(
-            label="📥 마스터 엑셀 파일 다운로드",
+            label="📥 마스터 엑셀 파일 다운로드 (.xlsx)",
             data=buffer.getvalue(),
-            file_name="기술이전_대량추출_마스터양식.xlsx",
+            file_name=f"기술이전_대량추출결과_{datetime.date.today()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
-
-
 
 
 
