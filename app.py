@@ -314,7 +314,16 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             final_data_list.append(row_dict)
             
         df = pd.DataFrame(final_data_list, columns=target_columns)
+        
+        # ---------- 텍스트를 실제 날짜 형식으로 변환 ----------
+        df["2.기술이전계약일"] = pd.to_datetime(df["2.기술이전계약일"], errors='coerce').dt.date
+        # ---------------------------------------------------------------
+
         st.dataframe(df)
+
+        # 엑셀 파일 생성
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
 
         # 엑셀 파일 생성
         buffer = io.BytesIO()
@@ -335,6 +344,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
+
 
 
 
