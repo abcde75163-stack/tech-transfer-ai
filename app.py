@@ -199,6 +199,7 @@ st.markdown("""
 * **3번 열 [기관(업체)명]:** '부산대학교 산학협력단'으로 고정됩니다.
 * **4번 열 [기관(업체)명2]:** 추출된 상대 업체의 이름이 '(주)'로 정리되어 입력됩니다.
 * **7번 & 9번 열 [국내/국외 & 국내지역구분]:** 국내일 경우 자동으로 '국내' 표기 및 '051 부산' 형태로 지역번호가 삽입됩니다.
+* **납부기한 열:** 추출된 정액기술료 납부방법(분할납부 스케줄 등)이 '납부기한' 열에 매핑됩니다.
 """)
 
 col1, col2 = st.columns(2)
@@ -304,7 +305,10 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             row_dict["42.계약기간"] = d.get("15. 계약기간", "")
             row_dict["46.기술료 수취유형"] = d.get("16. 기술료 유형", "")
             row_dict["50.총 기술료(단위 : 원)"] = d.get("17. 총 정액기술료(단위: 원)", "")
-            row_dict["정액기술료 납부방법(상세)"] = d.get("18. 정액기술료 납부방법", "")
+            
+            # [요청 반영] 정액기술료 납부방법을 '납부기한' 열에 매핑
+            row_dict["납부기한"] = d.get("18. 정액기술료 납부방법", "")
+            
             row_dict["48.경상기술료"] = d.get("19. 경상기술료(Running Royalty) 조건", "")
             row_dict["담당자"] = d.get("20. 학교 업무담당자 성명", "")
             row_dict["35.지식재산권 번호"] = d.get("21. 특허출원(등록)번호", "")
@@ -334,5 +338,4 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
-
 
