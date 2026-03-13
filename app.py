@@ -66,6 +66,19 @@ def format_region(region_str):
             
     return "", region_str
 
+def format_currency(value):
+    """금액을 천 단위 콤마(,)가 포함된 형식으로 변환합니다."""
+    if not value:
+        return ""
+    try:
+        # 숫자가 아닌 문자(원, 콤마, 공백 등) 제거 후 정수 변환
+        clean_num = re.sub(r'[^\d]', '', str(value))
+        if clean_num:
+            return f"{int(clean_num):,}"
+    except Exception:
+        pass
+    return str(value)
+
 def add_months(sourcedate, months):
     month = sourcedate.month - 1 + months
     year = sourcedate.year + month // 12
@@ -202,6 +215,7 @@ st.title("📑 기술이전계약서 대량 일괄 추출 시스템")
 st.markdown("""
 계약서와 사업자등록증을 업로드하면 AI가 분석하여 데이터를 엑셀로 자동 정리합니다.
 * **날짜 속성 강화:** 계약일이 엑셀에서 완벽한 '날짜' 형식으로 인식되도록 변환됩니다.
+* **금액 서식 적용:** 총 기술료 등의 금액 데이터가 콤마(,)가 포함된 회계 형식(예: 10,000,000)으로 추출됩니다.
 * **3번 열 [기관(업체)명]:** '부산대학교 산학협력단'으로 고정됩니다.
 * **4번 열 [기관(업체)명2]:** 상대 업체의 '주식회사' 및 '(주)'가 모두 특수문자 **'㈜'**로 정리되어 입력됩니다.
 * **7번 & 9번 열 [국내/국외 & 국내지역구분]:** 국내일 경우 자동으로 '국내' 표기 및 '051 부산' 형태로 지역번호가 삽입됩니다.
@@ -307,7 +321,9 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             row_dict["41.거래유형"] = d.get("14. 거래유형", "")
             row_dict["42.계약기간"] = d.get("15. 계약기간", "")
             row_dict["46.기술료 수취유형"] = d.get("16. 기술료 유형", "")
-            row_dict["50.총 기술료(단위 : 원)"] = d.get("17. 총 정액기술료(단위: 원)", "")
+            
+            # [수정 반영] 금액을 천 단위 콤마(,) 형식으로 포맷팅하여 입력
+            row_dict["50.총 기술료(단위 : 원)"] = format_currency(d.get("17. 총 정액기술료(단위: 원)", ""))
             
             # [수정 반영] 정액기술료 납부방법을 '납부기한' 열에 매핑
             row_dict["납부기한"] = d.get("18. 정액기술료 납부방법", "")
