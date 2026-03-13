@@ -106,7 +106,7 @@ def extract_with_gemini(contract_path, biz_reg_path, model_name):
         docs_to_analyze.append(prompt)
         response = model.generate_content(docs_to_analyze, request_options={"timeout": 600})
         result_text = response.text.strip()
-        if result_text.startswith("
+       
         max_retries = 2
         for attempt in range(max_retries):
             try:
@@ -273,6 +273,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
+
 
 
 
