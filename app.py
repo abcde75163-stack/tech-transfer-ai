@@ -41,6 +41,26 @@ def format_company_name(name):
     name = name.replace('(주)(주)', '(주)')
     return name.strip()
 
+def format_region(region_str):
+    """지역명을 분석하여 (국내/국외 여부, 지역번호 포함 지역명)을 반환합니다."""
+    if not region_str:
+        return "", ""
+    
+    region_mapping = {
+        "서울": "02 서울", "부산": "051 부산", "대구": "053 대구", 
+        "인천": "032 인천", "광주": "062 광주", "대전": "042 대전", 
+        "울산": "052 울산", "세종": "044 세종", "경기": "031 경기", 
+        "강원": "033 강원", "충북": "043 충북", "충남": "041 충남", 
+        "전북": "063 전북", "전남": "061 전남", "경북": "054 경북", 
+        "경남": "055 경남", "제주": "064 제주"
+    }
+    
+    for key, value in region_mapping.items():
+        if key in region_str:
+            return "국내", value
+            
+    return "", region_str
+
 def add_months(sourcedate, months):
     month = sourcedate.month - 1 + months
     year = sourcedate.year + month // 12
@@ -178,6 +198,7 @@ st.markdown("""
 계약서와 사업자등록증을 업로드하면 AI가 분석하여 데이터를 엑셀로 자동 정리합니다.
 * **3번 열 [기관(업체)명]:** '부산대학교 산학협력단'으로 고정됩니다.
 * **4번 열 [기관(업체)명2]:** 추출된 상대 업체의 이름이 '(주)'로 정리되어 입력됩니다.
+* **7번 & 9번 열 [국내/국외 & 국내지역구분]:** 국내일 경우 자동으로 '국내' 표기 및 '051 부산' 형태로 지역번호가 삽입됩니다.
 """)
 
 col1, col2 = st.columns(2)
@@ -261,12 +282,17 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             
             # 4번 열: AI가 추출하고 (주)로 변환된 업체명 입력
             row_dict["4.기관(업체)명2"] = d.get("2. 회사명", "")
+            
+            # 7번 & 9번 열: 지역번호 포맷팅 (예: 051 부산)
+            raw_region = d.get("6. 지역구분", "")
+            dom_ovs, formatted_region = format_region(raw_region)
+            row_dict["7.국내/국외"] = dom_ovs
+            row_dict["9.국내지역구분"] = formatted_region
             # -----------------------------
             
             row_dict["11. 대표주소"] = d.get("3. 회사 주소", "")
             row_dict["13. 대표자성명"] = d.get("4. 회사 대표명", "")
             row_dict["10. 사업자등록번호"] = d.get("5. 사업자등록번호", "")
-            row_dict["9.국내지역구분"] = d.get("6. 지역구분", "")
             row_dict["15. 기술이전담당이름"] = d.get("7. 회사 업무담당자 성명", "")
             row_dict["19.이메일"] = d.get("8. 회사 업무 담당자 이메일", "")
             row_dict["12. 대표전화"] = d.get("9. 회사 업무 담당자 번호", "")
@@ -308,7 +334,5 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
-
-
 
 
