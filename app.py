@@ -161,7 +161,7 @@ def extract_with_gemini(contract_path, biz_reg_path, model_name):
             
         extracted_data = json.loads(result_text.strip())
         
-        # [데이터 후처리] 주식회사 -> (주) 변환 적용
+        # [데이터 후처리] 주식회사 -> ㈜ 변환 적용
         if "2. 회사명" in extracted_data:
             extracted_data["2. 회사명"] = format_company_name(extracted_data["2. 회사명"])
 
@@ -340,6 +340,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
+
 
 
 
