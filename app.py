@@ -268,7 +268,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             "88-1. 기술이전사업화경비 지식재산권 출원등록유지비", "88-2.성과활용 기여자보상금",
             "88-3.연구개발 재투자/기관운영경비등", "89.기타(특허지분액등)", "90.해당사업단명", "91.수납상황",
             "92.학진승인여부", "93.NTB등록여부", "94.기술가치평가여부", "95.계약변경일", "96.계약해지일",
-            "납부기한", "담당자", "담당자(연구원)", "원본 파일명", "정액기술료 납부방법(상세)"
+            "납부기한", "담당자", "담당자(연구원)"
         ]
 
         final_data_list = []
@@ -310,7 +310,6 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             row_dict["48.경상기술료"] = d.get("19. 경상기술료(Running Royalty) 조건", "")
             row_dict["담당자"] = d.get("20. 학교 업무담당자 성명", "")
             row_dict["35.지식재산권 번호"] = d.get("21. 특허출원(등록)번호", "")
-            row_dict["원본 파일명"] = d.get("0. 원본 파일명", "")
             
             final_data_list.append(row_dict)
             
@@ -336,5 +335,6 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
+
 
 
