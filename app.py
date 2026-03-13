@@ -31,13 +31,18 @@ def get_best_model():
         return "models/gemini-pro"
 
 def format_company_name(name):
-    """'주식회사'를 '㈜'로 자동 변환합니다."""
+    """'주식회사' 및 텍스트 '(주)'를 모두 특수기호 '㈜'로 변환합니다."""
     if not name:
         return ""
-    # 주식회사 문구를 ㈜로 치환 (앞, 뒤 공백 포함 모두 대응)
+    # 1. '주식회사' 텍스트를 ㈜로 치환
     name = re.sub(r'주식회사\s*', '㈜', name)
     name = re.sub(r'\s*주식회사', '㈜', name)
-    # 혹시 모를 ㈜㈜ 중복 방지
+    
+    # 2. 텍스트 '(주)' 또는 '( 주 )' 형태를 ㈜로 치환
+    name = re.sub(r'\(\s*주\s*\)\s*', '㈜', name)
+    name = re.sub(r'\s*\(\s*주\s*\)', '㈜', name)
+    
+    # 3. 혹시 모를 ㈜㈜ 중복 방지
     name = name.replace('㈜㈜', '㈜')
     return name.strip()
 
@@ -146,10 +151,10 @@ def extract_with_gemini(contract_path, biz_reg_path, model_name):
                         continue
                 raise e
 
-        # JSON 텍스트 파싱 (마크다운 기호로 인한 절삭 방지 처리)
+        # JSON 텍스트 파싱 (UI 절삭 오류 방지를 위해 백틱을 간접적으로 처리)
         result_text = response.text.strip()
-        md_json = "`" * 3 + "json"
-        md_end = "`" * 3
+        md_json = chr(96)*3 + "json"
+        md_end = chr(96)*3
         
         if result_text.startswith(md_json): 
             result_text = result_text[7:]
@@ -196,11 +201,12 @@ st.set_page_config(page_title="기술이전 대량 자동 추출기", page_icon=
 st.title("📑 기술이전계약서 대량 일괄 추출 시스템")
 st.markdown("""
 계약서와 사업자등록증을 업로드하면 AI가 분석하여 데이터를 엑셀로 자동 정리합니다.
+* **날짜 속성 강화:** 계약일이 엑셀에서 완벽한 '날짜' 형식으로 인식되도록 변환됩니다.
 * **3번 열 [기관(업체)명]:** '부산대학교 산학협력단'으로 고정됩니다.
-* **4번 열 [기관(업체)명2]:** 추출된 상대 업체의 이름이 '㈜'로 정리되어 입력됩니다.
+* **4번 열 [기관(업체)명2]:** 상대 업체의 '주식회사' 및 '(주)'가 모두 특수문자 **'㈜'**로 정리되어 입력됩니다.
 * **7번 & 9번 열 [국내/국외 & 국내지역구분]:** 국내일 경우 자동으로 '국내' 표기 및 '051 부산' 형태로 지역번호가 삽입됩니다.
-* **납부기한 열:** 추출된 정액기술료 납부방법(분할납부 스케줄 등)이 '납부기한' 열에 매핑됩니다.
 * **18번 열 [핸드폰]:** 추출된 담당자 연락처가 12번(대표전화)이 아닌 18번(핸드폰) 열에 올바르게 매핑됩니다.
+* **납부기한 열:** 추출된 정액기술료 납부방법(분할납부 스케줄 등)이 '납부기한' 열에 매핑됩니다.
 """)
 
 col1, col2 = st.columns(2)
@@ -236,7 +242,6 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             data = extract_with_gemini(c_path, b_path, model_name)
             
             if data:
-                data["0. 원본 파일명"] = c_file.name 
                 all_extracted_data.append(data)
             
             os.remove(c_path)
@@ -246,7 +251,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             
         status_text.success("🎉 모든 파일의 분석이 완료되었습니다!")
         
-        # 다운로드할 엑셀의 컬럼 목록 (순서 유지)
+        # 다운로드할 엑셀의 컬럼 목록 (불필요한 원본파일명 등 열 삭제됨)
         target_columns = [
             "1.연번", "2.기술이전계약일", "3.기관(업체)명", "4.기관(업체)명2", "5.기관유형", "6.업종유형",
             "7.국내/국외", "8. 국가명(국외의 경우)", "9.국내지역구분", "10. 사업자등록번호", "11. 대표주소",
@@ -292,7 +297,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             row_dict["15. 기술이전담당이름"] = d.get("7. 회사 업무담당자 성명", "")
             row_dict["19.이메일"] = d.get("8. 회사 업무 담당자 이메일", "")
             
-            # [수정] 대표전화 대신 18번(S열) 핸드폰으로 매핑 위치 변경
+            # [수정 반영] 대표전화 대신 18번(S열) 핸드폰으로 매핑
             row_dict["18.핸드폰"] = d.get("9. 회사 업무 담당자 번호", "")
             
             row_dict["27.기술명"] = d.get("10. 기술이전계약명", "")
@@ -304,7 +309,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             row_dict["46.기술료 수취유형"] = d.get("16. 기술료 유형", "")
             row_dict["50.총 기술료(단위 : 원)"] = d.get("17. 총 정액기술료(단위: 원)", "")
             
-            # 정액기술료 납부방법을 '납부기한' 열에 매핑
+            # [수정 반영] 정액기술료 납부방법을 '납부기한' 열에 매핑
             row_dict["납부기한"] = d.get("18. 정액기술료 납부방법", "")
             
             row_dict["48.경상기술료"] = d.get("19. 경상기술료(Running Royalty) 조건", "")
@@ -315,9 +320,8 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             
         df = pd.DataFrame(final_data_list, columns=target_columns)
         
-        # ---------- 텍스트를 실제 날짜 형식으로 변환 ----------
+        # [수정 반영] 텍스트를 실제 엑셀 날짜 형식으로 변환 (복붙 인식 문제 해결)
         df["2.기술이전계약일"] = pd.to_datetime(df["2.기술이전계약일"], errors='coerce').dt.date
-        # ---------------------------------------------------------------
 
         st.dataframe(df)
 
@@ -340,8 +344,6 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
-
-
 
 
 
