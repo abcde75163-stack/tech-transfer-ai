@@ -31,14 +31,14 @@ def get_best_model():
         return "models/gemini-pro"
 
 def format_company_name(name):
-    """'주식회사'를 '(주)'로 자동 변환합니다."""
+    """'주식회사'를 '㈜'로 자동 변환합니다."""
     if not name:
         return ""
-    # 주식회사 문구를 (주)로 치환 (앞, 뒤 공백 포함 모두 대응)
-    name = re.sub(r'주식회사\s*', '(주)', name)
-    name = re.sub(r'\s*주식회사', '(주)', name)
-    # 혹시 모를 (주)(주) 중복 방지
-    name = name.replace('(주)(주)', '(주)')
+    # 주식회사 문구를 ㈜로 치환 (앞, 뒤 공백 포함 모두 대응)
+    name = re.sub(r'주식회사\s*', '㈜', name)
+    name = re.sub(r'\s*주식회사', '㈜', name)
+    # 혹시 모를 ㈜㈜ 중복 방지
+    name = name.replace('㈜㈜', '㈜')
     return name.strip()
 
 def format_region(region_str):
@@ -340,6 +340,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
+
 
 
 
