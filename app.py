@@ -103,26 +103,34 @@ def calculate_exact_period(start_date_str, period_str):
         pass 
     return period_str
 
-def extract_with_gemini(contract_path, biz_reg_path, model_name):
-    """Gemini API를 사용하여 PDF 파일에서 21개 항목을 추출합니다."""
+def extract_with_gemini(contract_path, biz_reg_path, info_path, model_name):
+    """Gemini API를 사용하여 여러 PDF 파일에서 항목을 종합 추출합니다."""
     model = genai.GenerativeModel(model_name)
     uploaded_files = []
     
     try:
+        # 1. 계약서 업로드
         c_file = genai.upload_file(path=contract_path)
         uploaded_files.append(c_file)
+        docs_to_analyze = [c_file]
         time.sleep(2)
         
+        # 2. 사업자등록증 업로드
         if biz_reg_path:
             b_file = genai.upload_file(path=biz_reg_path)
             uploaded_files.append(b_file)
+            docs_to_analyze.append(b_file)
             time.sleep(2)
-            docs_to_analyze = [c_file, b_file]
-        else:
-            docs_to_analyze = [c_file]
+            
+        # 3. 기술이전 정보 문서 업로드 [추가됨]
+        if info_path:
+            i_file = genai.upload_file(path=info_path)
+            uploaded_files.append(i_file)
+            docs_to_analyze.append(i_file)
+            time.sleep(2)
 
         prompt = """
-        첨부된 문서를 분석하여 아래 21개 항목의 정보를 추출해 줘. (사업자등록증이 없다면 계약서 내용만으로 최대한 유추할 것)
+        첨부된 문서들을 종합 분석하여 아래 항목의 정보를 추출해 줘. (문서들 간의 내용을 상호 보완하여 추출할 것)
         반드시 마크다운 기호 없이 순수 JSON 형식으로만 답변해야 해. 정보가 없으면 빈 문자열("") 입력.
         
         {
@@ -136,8 +144,8 @@ def extract_with_gemini(contract_path, biz_reg_path, model_name):
             "8. 회사 업무 담당자 이메일": "",
             "9. 회사 업무 담당자 번호": "010-0000-0000",
             "10. 기술이전계약명": "",
-            "11. 기술이전책임자명": "",
-            "12. 학과": "",
+            "11. 기술이전책임자명": "주발명자명 기재",
+            "12. 학과": "소속(단과대학) 또는 소속 학과",
             "13. 기술유형": "'특허', '노하우', '자문', '저작권' 이 4개 중 하나만 선택해서 기재",
             "14. 거래유형": "독점 통상실시권, 비독점 통상실시권, 전용실시권, 특허양도 등 계약서 상의 거래 형태 기재",
             "15. 계약기간": "계약서에 명시된 계약기간 기재 (예: '3년', '48개월', 또는 'YYYY.MM.DD~YYYY.MM.DD')",
@@ -145,8 +153,16 @@ def extract_with_gemini(contract_path, biz_reg_path, model_name):
             "17. 총 정액기술료(단위: 원)": "분할납부 조건이더라도 모두 합친 '총액'을 숫자만 기재 (콤마 제외), 없으면 0",
             "18. 정액기술료 납부방법": "일시불인지, 혹은 '선금 OOO원, 중도금 OOO원(조건)' 등 분할 납부 스케줄과 조건이 있다면 상세히 요약 기재. 없으면 해당없음",
             "19. 경상기술료(Running Royalty) 조건": "순매출액의 X% 등 경상기술료 조건이 명시되어 있다면 상세 기재, 없으면 '해당없음'",
-            "20. 학교 업무담당자 성명": "",
-            "21. 특허출원(등록)번호": "계약서 상에 특허출원번호나 등록번호가 명시되어 있으면 모두 기재, 없으면 빈 문자열"
+            "20. 학교 업무담당자 성명": "기술이전 담당자 또는 실무 담당자 성명 기재",
+            "21. 특허출원(등록)번호": "계약서 상에 특허출원번호나 등록번호가 명시되어 있으면 모두 기재, 없으면 빈 문자열",
+            "22. 주발명자 전화번호": "기술이전 정보 문서 내 발명자 정보의 전화번호 기재",
+            "23. 주발명자 이메일": "기술이전 정보 문서 내 발명자 정보의 이메일 기재",
+            "24. 연구과제명": "연구개발과제 현황의 연구과제명 기재",
+            "25. 대사업명": "연구개발과제 현황의 대사업명 기재",
+            "26. 중사업명": "연구개발과제 현황의 중사업명 기재",
+            "27. 지원기관과제번호": "연구과제번호 기재",
+            "28. 연구협약일": "연구협약일 기재",
+            "29. 정부출연금": "연구개발비 중 정부출연금 숫자만 기재 (콤마 제외)"
         }
         """
         docs_to_analyze.append(prompt)
@@ -213,21 +229,20 @@ st.set_page_config(page_title="기술이전 대량 자동 추출기", page_icon=
 
 st.title("📑 기술이전계약서 대량 일괄 추출 시스템")
 st.markdown("""
-계약서와 사업자등록증을 업로드하면 AI가 분석하여 데이터를 엑셀로 자동 정리합니다.
-* **날짜 속성 강화:** 계약일이 엑셀에서 완벽한 '날짜' 형식으로 인식되도록 변환됩니다.
-* **금액 서식 적용:** 총 기술료 등의 금액 데이터가 콤마(,)가 포함된 회계 형식(예: 10,000,000)으로 추출됩니다.
-* **3번 열 [기관(업체)명]:** '부산대학교 산학협력단'으로 고정됩니다.
-* **4번 열 [기관(업체)명2]:** 상대 업체의 '주식회사' 및 '(주)'가 모두 특수문자 **'㈜'**로 정리되어 입력됩니다.
-* **7번 & 9번 열 [국내/국외 & 국내지역구분]:** 국내일 경우 자동으로 '국내' 표기 및 '051 부산' 형태로 지역번호가 삽입됩니다.
-* **18번 열 [핸드폰]:** 추출된 담당자 연락처가 12번(대표전화)이 아닌 18번(핸드폰) 열에 올바르게 매핑됩니다.
-* **납부기한 열:** 추출된 정액기술료 납부방법(분할납부 스케줄 등)이 '납부기한' 열에 매핑됩니다.
+계약서, 사업자등록증, 그리고 **기술이전 정보** 문서까지 업로드하면 AI가 상호 분석하여 엑셀 데이터를 완벽하게 정리합니다.
+* **업데이트:** 연구과제명, 대사업/중사업명, 주발명자 연락처 및 정부출연금 데이터가 추가로 추출되어 매핑됩니다.
+* **날짜 속성 강화:** 복사/붙여넣기 시 엑셀에서 완벽한 '날짜' 형식으로 인식됩니다.
+* **금액 서식 적용:** 총 기술료, 정부출연금 등의 금액이 콤마(,)가 포함된 회계 형식(예: 10,000,000)으로 추출됩니다.
+* **자동 변환:** 업체의 '주식회사'는 **'㈜'**로, 지역명은 **'051 부산'**과 같은 지역번호 형태로 자동 입력됩니다.
 """)
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 with col1:
-    contract_files = st.file_uploader("1. 기술이전계약서 업로드 (PDF) 📄", type=['pdf'], accept_multiple_files=True)
+    contract_files = st.file_uploader("1. 기술이전계약서 (PDF) 📄", type=['pdf'], accept_multiple_files=True)
 with col2:
-    biz_files = st.file_uploader("2. 사업자등록증 업로드 (PDF) 🏢", type=['pdf'], accept_multiple_files=True)
+    biz_files = st.file_uploader("2. 사업자등록증 (PDF) 🏢", type=['pdf'], accept_multiple_files=True)
+with col3:
+    info_files = st.file_uploader("3. 기술이전 정보 (PDF) 💡", type=['pdf'], accept_multiple_files=True)
 
 if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
     if not contract_files:
@@ -252,26 +267,36 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_b:
                     tmp_b.write(b_file.read())
                     b_path = tmp_b.name
+                    
+            i_path = ""
+            if info_files and len(info_files) > i:
+                info_file = info_files[i]
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_i:
+                    tmp_i.write(info_file.read())
+                    i_path = tmp_i.name
             
-            data = extract_with_gemini(c_path, b_path, model_name)
+            # 3가지 파일을 모두 전달하여 추출
+            data = extract_with_gemini(c_path, b_path, i_path, model_name)
             
             if data:
                 all_extracted_data.append(data)
             
+            # 임시 파일 삭제
             os.remove(c_path)
             if b_path: os.remove(b_path)
+            if i_path: os.remove(i_path)
             
             progress_bar.progress((i + 1) / len(contract_files))
             
         status_text.success("🎉 모든 파일의 분석이 완료되었습니다!")
         
-        # 다운로드할 엑셀의 컬럼 목록 (불필요한 원본파일명 등 열 삭제됨)
+        # 다운로드할 엑셀의 컬럼 목록 (새로 주신 마스터 양식 기준)
         target_columns = [
             "1.연번", "2.기술이전계약일", "3.기관(업체)명", "4.기관(업체)명2", "5.기관유형", "6.업종유형",
             "7.국내/국외", "8. 국가명(국외의 경우)", "9.국내지역구분", "10. 사업자등록번호", "11. 대표주소",
             "12. 대표전화", "13. 대표자성명", "13-1.홈페이지", "14. 실제우편보낼주소", "15. 기술이전담당이름",
             "16. 담당부서", "17. 직급", "18.핸드폰", "18-1.팩스", "19.이메일", "20.담당자명", "21.담당부서",
-            "22.직급", "23.핸드폰/전화번호", "24.이메일2", "25.종업원수(상시)", "26.연매출액(단위 : 천원)",
+            "22.직급", "23.핸드폰/\n전화번호", "24.이메일", "25.종업원수(상시)", "26.연매출액(단위 : 천원)",
             "27.기술명", "28.주발명자", "28-1.교직원번호", "29.소속", "30.전공", "31.공동발명자",
             "35-1.교직원번호", "32.소속2", "33.전공2", "34.기술유형", "35.지식재산권 번호", "36.상태(출원, 등록)",
             "37.포함된 기술 수", "38.특허비용(산단지원금)", "39.기술분야(6T)", "40.기술분류", "41.거래유형",
@@ -311,7 +336,7 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             row_dict["15. 기술이전담당이름"] = d.get("7. 회사 업무담당자 성명", "")
             row_dict["19.이메일"] = d.get("8. 회사 업무 담당자 이메일", "")
             
-            # [수정 반영] 대표전화 대신 18번(S열) 핸드폰으로 매핑
+            # 대표전화 대신 18번(S열) 핸드폰으로 매핑
             row_dict["18.핸드폰"] = d.get("9. 회사 업무 담당자 번호", "")
             
             row_dict["27.기술명"] = d.get("10. 기술이전계약명", "")
@@ -322,21 +347,31 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             row_dict["42.계약기간"] = d.get("15. 계약기간", "")
             row_dict["46.기술료 수취유형"] = d.get("16. 기술료 유형", "")
             
-            # [수정 반영] 금액을 천 단위 콤마(,) 형식으로 포맷팅하여 입력
+            # 금액을 천 단위 콤마(,) 형식으로 포맷팅하여 입력
             row_dict["50.총 기술료(단위 : 원)"] = format_currency(d.get("17. 총 정액기술료(단위: 원)", ""))
             
-            # [수정 반영] 정액기술료 납부방법을 '납부기한' 열에 매핑
+            # 정액기술료 납부방법을 '납부기한' 열에 매핑
             row_dict["납부기한"] = d.get("18. 정액기술료 납부방법", "")
             
             row_dict["48.경상기술료"] = d.get("19. 경상기술료(Running Royalty) 조건", "")
-            row_dict["담당자"] = d.get("20. 학교 업무담당자 성명", "")
+            
+            # [신규 추가된 기술이전 정보 매핑]
+            row_dict["20.담당자명"] = d.get("20. 학교 업무담당자 성명", "")
             row_dict["35.지식재산권 번호"] = d.get("21. 특허출원(등록)번호", "")
+            row_dict["23.핸드폰/\n전화번호"] = d.get("22. 주발명자 전화번호", "")
+            row_dict["24.이메일"] = d.get("23. 주발명자 이메일", "")
+            row_dict["53.연구과제명"] = d.get("24. 연구과제명", "")
+            row_dict["60.대사업명"] = d.get("25. 대사업명", "")
+            row_dict["61.중사업명"] = d.get("26. 중사업명", "")
+            row_dict["62.지원기관과제번호"] = d.get("27. 지원기관과제번호", "")
+            row_dict["59. 협약일"] = d.get("28. 연구협약일", "")
+            row_dict["67.정부출연금"] = format_currency(d.get("29. 정부출연금", ""))
             
             final_data_list.append(row_dict)
             
         df = pd.DataFrame(final_data_list, columns=target_columns)
         
-        # [수정 반영] 텍스트를 실제 엑셀 날짜 형식으로 변환 (복붙 인식 문제 해결)
+        # 텍스트를 실제 엑셀 날짜 형식으로 변환 (복붙 인식 문제 해결)
         df["2.기술이전계약일"] = pd.to_datetime(df["2.기술이전계약일"], errors='coerce').dt.date
 
         st.dataframe(df)
@@ -360,9 +395,6 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
-
-
-
 
 
 
