@@ -256,7 +256,7 @@ st.set_page_config(page_title="기술이전 대량 자동 추출기", page_icon=
 st.title("📑 기술이전계약서 대량 일괄 추출 시스템")
 st.markdown("""
 계약서, 사업자등록증, 그리고 **기술이전 정보** 문서까지 업로드하면 AI가 상호 분석하여 엑셀 데이터를 완벽하게 정리합니다.
-* **연번 자동화(수식 적용):** 추출된 엑셀의 연번에는 `=ROW()-1` 수식이 들어갑니다. 기존 DB에 붙여넣기만 하시면 번호가 알아서 이어집니다!
+* **연번 자동화(수식 적용):** 추출된 엑셀의 연번에는 `="2026-"&TEXT(ROW()-1, "000")` 수식이 들어갑니다. 복사/붙여넣기 시 해당 엑셀 행 번호에 맞춰 자동으로 `2026-050` 형태로 변경됩니다!
 * **비용담당자 매핑:** 업체 비용담당자의 성명, 부서, 직급, 전화번호, 이메일이 각각 V~Z열에 올바르게 매핑됩니다.
 * **출원/등록 상태 자동 판별:** 둘 다 있으면 등록번호 우선 기입 후 "등록", 하나만 있으면 해당 번호 기입 후 상태에 반영됩니다.
 * **담당자 열(CZ열) 매핑:** 산학협력단 담당자 이름이 뒷부분 담당자(CZ열)에 완벽하게 들어갑니다.
@@ -272,9 +272,14 @@ with col3:
 
 st.markdown("---")
 # 연번 자동 계산 (수식) 옵션 제공
-st.markdown("### ⚙️ 연번(번호) 수식 설정")
-header_rows = st.number_input("마스터 엑셀(데이터베이스)의 제목(헤더) 줄 수를 입력하세요. (일반적으로 1줄이므로 1을 유지하시면 됩니다.)", min_value=1, value=1, step=1)
-st.info(f"💡 생성된 엑셀의 연번 칸에는 수식 `=ROW()-{header_rows}` 이 자동으로 들어갑니다. 다른 파일에 복사/붙여넣기 시 기존 번호에 맞춰 자연스럽게 연번이 이어집니다!")
+st.markdown("### ⚙️ 연번(번호) 자동 생성 설정")
+col_seq1, col_seq2 = st.columns(2)
+with col_seq1:
+    target_year = st.number_input("📅 연도 지정 (예: 2026)", min_value=2000, value=datetime.date.today().year, step=1)
+with col_seq2:
+    header_rows = st.number_input("마스터 엑셀의 제목(헤더) 줄 수", min_value=1, value=1, step=1)
+
+st.info(f"💡 생성된 엑셀의 연번 칸에는 수식 `=\"{target_year}-\"&TEXT(ROW()-{header_rows}, \"000\")` 이 자동으로 들어갑니다. 마스터 파일에 복붙 시 행 위치에 따라 `2026-049`, `2026-050` 등 동적으로 번호가 바뀝니다!")
 
 if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
     if not contract_files:
@@ -351,8 +356,8 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
         for idx, d in enumerate(all_extracted_data):
             row_dict = {col: "" for col in target_columns}
             
-            # [연번 수식 적용] 엑셀에서 복사 붙여넣기 시 해당 행 위치를 파악해 자동으로 연번이 기재되도록 설정
-            row_dict["1.연번"] = f"=ROW()-{header_rows}"
+            # [연번 수식 적용] 엑셀에서 복사 붙여넣기 시 행 번호 기반으로 YYYY-XXX 포맷 자동 업데이트
+            row_dict["1.연번"] = f'="{target_year}-"&TEXT(ROW()-{header_rows}, "000")'
             
             row_dict["2.기술이전계약일"] = d.get("1. 기술이전계약일", "")
             
