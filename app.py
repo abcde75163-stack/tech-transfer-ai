@@ -256,7 +256,7 @@ st.set_page_config(page_title="기술이전 대량 자동 추출기", page_icon=
 st.title("📑 기술이전계약서 대량 일괄 추출 시스템")
 st.markdown("""
 계약서, 사업자등록증, 그리고 **기술이전 정보** 문서까지 업로드하면 AI가 상호 분석하여 엑셀 데이터를 완벽하게 정리합니다.
-* **연번 자동화:** 시작 연번을 지정하면 `2026-050` 처럼 고정된 텍스트 형태로 자동 생성되어 기존 DB에 복붙 시 번호가 안전하게 유지됩니다.
+* **연번 자동화 끝판왕:** 번호를 따로 입력할 필요 없습니다. 추출된 엑셀 데이터를 기존 데이터베이스의 가장 아래 줄에 붙여넣기만 하면, **알아서 바로 윗줄 번호를 읽고 다음 연번(예: 2026-050)으로 착착! 바뀝니다.**
 * **비용담당자 매핑:** 업체 비용담당자의 성명, 부서, 직급, 전화번호, 이메일이 각각 V~Z열에 올바르게 매핑됩니다.
 * **출원/등록 상태 자동 판별:** 둘 다 있으면 등록번호 우선 기입 후 "등록", 하나만 있으면 해당 번호 기입 후 상태에 반영됩니다.
 * **담당자 열(CZ열) 매핑:** 산학협력단 담당자 이름이 뒷부분 담당자(CZ열)에 완벽하게 들어갑니다.
@@ -271,15 +271,11 @@ with col3:
     info_files = st.file_uploader("3. 기술이전 정보 (PDF) 💡", type=['pdf'], accept_multiple_files=True)
 
 st.markdown("---")
-# 연번 텍스트 자동 생성 (수식 대신 고정 텍스트로 생성)
+# 연번 상대 참조 수식용 연도 입력 (기본적으로 시작 연번 입력을 생략하고 엑셀 수식에 맡김)
 st.markdown("### ⚙️ 연번(번호) 자동 생성 설정")
-col_seq1, col_seq2 = st.columns(2)
-with col_seq1:
-    target_year = st.number_input("📅 연도 지정 (예: 2026)", min_value=2000, value=datetime.date.today().year, step=1)
-with col_seq2:
-    start_seq_num = st.number_input("🔢 시작 연번 (예: 50)", min_value=1, value=1, step=1)
+target_year = st.number_input("📅 연번 앞자리 연도 (예: 2026)", min_value=2000, value=datetime.date.today().year, step=1)
 
-st.info(f"💡 추출 시 `1.연번` 열에 `{target_year}-{start_seq_num:03d}`, `{target_year}-{start_seq_num+1:03d}` 처럼 고정된 텍스트로 생성됩니다. 기존 데이터베이스에 그대로 복사/붙여넣기 하시면 됩니다!")
+st.info(f"💡 생성되는 파일의 `1.연번` 열에는 **내 바로 위 셀의 숫자를 읽어와 +1을 해주는 마법의 엑셀 수식**이 적용됩니다. 붙여넣기하는 순간 기존 번호에 맞춰서 완벽하게 이어집니다!")
 
 if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
     if not contract_files:
@@ -356,9 +352,9 @@ if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
         for idx, d in enumerate(all_extracted_data):
             row_dict = {col: "" for col in target_columns}
             
-            # [연번 고정 텍스트 생성] 지정한 시작 번호부터 순차적으로 포맷팅 (예: 2026-050)
-            current_seq = start_seq_num + idx
-            row_dict["1.연번"] = f"{target_year}-{current_seq:03d}"
+            # [연번 마법의 수식 적용] 바로 윗줄 A열(A{idx+1})의 문자열에서 우측 3자리를 뽑아 +1을 한 뒤 "000" 형태로 다시 결합. 
+            # 에러 발생(예: 윗줄이 텍스트 제목) 시 0으로 취급하여 001부터 시작!
+            row_dict["1.연번"] = f'="{target_year}-"&TEXT(IFERROR(VALUE(RIGHT(A{idx + 1},3)),0)+1,"000")'
             
             row_dict["2.기술이전계약일"] = d.get("1. 기술이전계약일", "")
             
