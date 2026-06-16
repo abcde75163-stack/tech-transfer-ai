@@ -1,3 +1,4 @@
+
 import streamlit as st
 import google.generativeai as genai
 import pandas as pd
@@ -306,8 +307,14 @@ def append_row_to_master(master_path, extracted_data, target_year):
  
     new_row = last_row + 1
  
-    # 연번 수식 — 앞에 = 없이 수식 문자열만 저장해야 openpyxl이 수식으로 인식
-    ws.cell(row=new_row, column=1).value = f'="{target_year}-"&TEXT(IFERROR(VALUE(RIGHT(A{last_row},3)),0)+1,"000")'
+    # 연번 직접 계산 (openpyxl은 수식 실행 불가 → Python에서 직접 계산 후 문자열로 저장)
+    last_serial = ws.cell(row=last_row, column=1).value
+    serial_match = re.search(r'(\d{4})-(\d+)', str(last_serial)) if last_serial else None
+    if serial_match:
+        new_serial = f'{serial_match.group(1)}-{int(serial_match.group(2))+1:03d}'
+    else:
+        new_serial = f'{target_year}-001'
+    ws.cell(row=new_row, column=1).value = new_serial
  
     # 컬럼 헤더 → 열 번호 매핑
     headers = {}
