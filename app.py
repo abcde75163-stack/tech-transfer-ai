@@ -294,15 +294,19 @@ def append_row_to_master(master_path, extracted_data, target_year):
     wb = load_workbook(master_path)
     ws = wb['내역']
  
-    # 마지막 실제 데이터 행 찾기 (B열 계약일 기준 — A열은 수식 문자열이 섞여 오탐 발생)
+    # 마지막 실제 데이터 행 찾기
+    # A열이 YYYY-NNN 연번 패턴이거나 B열이 datetime인 행 중 마지막
     last_row = 1
-    for i, row in enumerate(ws.iter_rows(min_row=2, values_only=False)):
-        if row[1].value is not None:  # B열(계약일)에 값이 있는 행
-            last_row = i + 2  # 헤더 1행 + 0-index 보정
+    for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True)):
+        a_val = str(row[0]) if row[0] is not None else ""
+        b_is_date = isinstance(row[1], datetime.datetime)
+        a_is_serial = bool(re.match(r'^\d{4}-\d{3}', a_val))
+        if a_is_serial or b_is_date:
+            last_row = i + 2
  
     new_row = last_row + 1
  
-    # 연번 수식 (바로 윗줄 A열 기준)
+    # 연번 수식 — 앞에 = 없이 수식 문자열만 저장해야 openpyxl이 수식으로 인식
     ws.cell(row=new_row, column=1).value = f'="{target_year}-"&TEXT(IFERROR(VALUE(RIGHT(A{last_row},3)),0)+1,"000")'
  
     # 컬럼 헤더 → 열 번호 매핑
@@ -684,4 +688,3 @@ with tab2:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
- 
