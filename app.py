@@ -1,4 +1,3 @@
-import streamlit as st
 import google.generativeai as genai
 import pandas as pd
 import json
@@ -294,11 +293,11 @@ def append_row_to_master(master_path, extracted_data, target_year):
     wb = load_workbook(master_path)
     ws = wb['내역']
  
-    # 마지막 실제 데이터 행 찾기 (A열 연번 기준)
+    # 마지막 실제 데이터 행 찾기 (B열 계약일 기준 — A열은 수식 문자열이 섞여 오탐 발생)
     last_row = 1
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value is not None:
-            last_row = row[0].row
+    for i, row in enumerate(ws.iter_rows(min_row=2, values_only=False)):
+        if row[1].value is not None:  # B열(계약일)에 값이 있는 행
+            last_row = i + 2  # 헤더 1행 + 0-index 보정
  
     new_row = last_row + 1
  
@@ -684,3 +683,4 @@ with tab2:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
+ 
