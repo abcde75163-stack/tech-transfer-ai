@@ -10,7 +10,7 @@ import datetime
 import calendar
 import re
 import openpyxl
-from openpyxl import load_workbook(master_path, keep_links=False)
+from openpyxl import load_workbook
 from copy import copy
  
 # ==========================================
