@@ -169,7 +169,9 @@ def extract_with_gemini(contract_path, biz_reg_path, info_path, model_name):
             "37. 업체 비용담당자 전화번호": "",
             "38. 업체 비용담당자 이메일": "",
             "39. 기술분야(6T)": "기술이전계약명(기술명)을 보고 아래 목록 중 가장 적합한 1개만 선택해서 기재. 선택지: IT, BT, NT, CT, ET, ST, 기타. (IT=정보통신기술, BT=생명공학기술, NT=나노기술, CT=문화기술, ET=환경기술, ST=우주항공기술)",
-            "40. 기술분류": "기술이전계약명(기술명)을 보고 아래 목록 중 가장 적합한 1개만 선택해서 기재. 선택지: 수학, 물리학, 화학, 지구과학(지구·대기·해양·천문), 생명과학, 농림수산식품, 보건의료, 기계, 재료, 화공, 전기/전자, 정보통신, 에너지/자원, 원자력, 환경, 건설/교통, 역사/고고학, 철학/종교, 언어, 문학, 문화/예술/체육, 법, 정치/행정, 경제/경영, 사회/인류/복지/여성, 생활, 지리/지역/관광, 심리, 교육, 미디어/커뮤니케이션/문헌정보, 뇌과학, 인지/감성과학, 과학기술과 인문사회, 인력 및 인프라, 기타"
+            "40. 기술분류": "기술이전계약명(기술명)을 보고 아래 목록 중 가장 적합한 1개만 선택해서 기재. 선택지: 수학, 물리학, 화학, 지구과학(지구·대기·해양·천문), 생명과학, 농림수산식품, 보건의료, 기계, 재료, 화공, 전기/전자, 정보통신, 에너지/자원, 원자력, 환경, 건설/교통, 역사/고고학, 철학/종교, 언어, 문학, 문화/예술/체육, 법, 정치/행정, 경제/경영, 사회/인류/복지/여성, 생활, 지리/지역/관광, 심리, 교육, 미디어/커뮤니케이션/문헌정보, 뇌과학, 인지/감성과학, 과학기술과 인문사회, 인력 및 인프라, 기타",
+            "41. 기관유형": "사업자등록증의 회사 규모/유형을 보고 아래 목록 중 가장 적합한 1개만 선택. 선택지: 대기업, 중견기업, 중소기업(일반), 중소기업(벤처), 개인, 국공립대학, 사립대학, 국공립시험연구기관, 정부출연연구기관, 특정연구기관, 전문생산기술연구소, 기술거래기관, 기타 비영리 법인 및 단체, 해외, 기타 정부산하기관, 공공기관, 공기업, 기타. 사업자등록증에 중소기업 확인서나 벤처기업 확인서 내용이 있으면 참고. 정보가 부족하면 빈 문자열",
+            "42. 업종유형": "사업자등록증의 업태와 종목을 바탕으로 한국표준산업분류(KSIC) 코드와 업종명을 추출. 형식 예시: (C26422)이동전화기 제조업 / (J58222)응용 소프트웨어 개발 및 공급업. 코드를 알 수 없으면 업태와 종목만 기재. 정보가 없으면 빈 문자열"
         }
         """
         docs_to_analyze.append(prompt)
@@ -341,6 +343,8 @@ def append_row_to_master(master_path, extracted_data, target_year):
  
     ws.cell(row=new_row, column=3).value = "부산대학교 산학협력단"
     ws.cell(row=new_row, column=4).value = d.get("2. 회사명", "")
+    ws.cell(row=new_row, column=5).value = d.get("41. 기관유형", "")  # 5.기관유형
+    ws.cell(row=new_row, column=6).value = d.get("42. 업종유형", "")  # 6.업종유형
  
     raw_region = d.get("6. 지역구분", "")
     dom_ovs, formatted_region = format_region(raw_region)
@@ -420,7 +424,7 @@ def update_distribution_in_master(master_path, dist_data_list):
                 return col
         return None
  
-    # 연번 → 행 번호 매핑 (A열 기준)
+    # 연번 → 행 번호 목록 매핑 (A열 기준, 동일 연번 여러 행 수집)
     serial_to_rows = {}
     for row in ws.iter_rows(min_row=2):
         val = row[0].value
@@ -441,7 +445,9 @@ def update_distribution_in_master(master_path, dist_data_list):
             results.append({"연번": serial, "상태": f"❌ 총정리파일에서 '{serial}' 행을 찾지 못함"})
             continue
  
-        target_rows = serial_to_rows[serial]
+        all_rows = serial_to_rows[serial]
+        # 동일 연번 중 마지막 행에만 분배 데이터 입력
+        target_row = all_rows[-1]
  
         def safe_int(val):
             try:
@@ -449,52 +455,37 @@ def update_distribution_in_master(master_path, dist_data_list):
             except:
                 return 0
  
-        # 입금일 처리
-        입금일_raw = dist_data.get("입금일", "")
-        입금일_val = 입금일_raw  # 그대로 문자열로 저장
+        # 70.입금일 / 73.현금입금액 / 82.분배일 는 입력 제외
+        col = get_col("83.제반비용\n(특허비용)")
+        if col:
+            ws.cell(row=target_row, column=col).value = safe_int(dist_data.get("특허비용공제"))
  
-        for r in target_rows:
-            col = get_col("70.입금일")
-            if col:
-                ws.cell(row=r, column=col).value = 입금일_val
+        col = get_col("84.제반비용\n(중개수수료")
+        if col:
+            ws.cell(row=target_row, column=col).value = safe_int(dist_data.get("중개수수료"))
  
-            col = get_col("73.현금입금액")
-            if col:
-                ws.cell(row=r, column=col).value = safe_int(dist_data.get("입금액합계"))
+        col = get_col("86.발명자")
+        if col:
+            ws.cell(row=target_row, column=col).value = safe_int(dist_data.get("발명자보상금"))
  
-            col = get_col("83.제반비용\n(특허비용)")
-            if col:
-                ws.cell(row=r, column=col).value = safe_int(dist_data.get("특허비용공제"))
+        col = get_col("88.산학협력단")
+        if col:
+            ws.cell(row=target_row, column=col).value = safe_int(dist_data.get("산학협력단분배액"))
  
-            col = get_col("84.제반비용\n(중개수수료")
-            if col:
-                ws.cell(row=r, column=col).value = safe_int(dist_data.get("중개수수료"))
+        col = get_col("88-1.")
+        if col:
+            ws.cell(row=target_row, column=col).value = safe_int(dist_data.get("지식재산권비용"))
  
-            col = get_col("86.발명자")
-            if col:
-                ws.cell(row=r, column=col).value = safe_int(dist_data.get("발명자보상금"))
+        col = get_col("88-2.")
+        if col:
+            ws.cell(row=target_row, column=col).value = safe_int(dist_data.get("성과활용기여자보상금"))
  
-            col = get_col("88.산학협력단")
-            if col:
-                ws.cell(row=r, column=col).value = safe_int(dist_data.get("산학협력단분배액"))
+        col = get_col("88-3.")
+        if col:
+            ws.cell(row=target_row, column=col).value = safe_int(dist_data.get("연구개발재투자"))
  
-            col = get_col("88-1.")
-            if col:
-                ws.cell(row=r, column=col).value = safe_int(dist_data.get("지식재산권비용"))
- 
-            col = get_col("88-2.")
-            if col:
-                ws.cell(row=r, column=col).value = safe_int(dist_data.get("성과활용기여자보상금"))
- 
-            col = get_col("88-3.")
-            if col:
-                ws.cell(row=r, column=col).value = safe_int(dist_data.get("연구개발재투자"))
- 
-            col = get_col("82.분배일")
-            if col:
-                ws.cell(row=r, column=col).value = dist_data.get("분배일", "")
- 
-        results.append({"연번": serial, "상태": f"✅ {len(target_rows)}행 업데이트 완료"})
+        row_info = f"총 {len(all_rows)}행 중 마지막 행({target_row})에 입력"
+        results.append({"연번": serial, "상태": f"✅ {row_info}"})
  
     output = io.BytesIO()
     wb.save(output)
