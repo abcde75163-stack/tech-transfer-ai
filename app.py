@@ -9,15 +9,17 @@ import io
 import datetime
 import calendar
 import re
-
+import openpyxl
+from openpyxl import load_workbook
+from copy import copy
+ 
 # ==========================================
 # 1. API 설정 및 기본 함수
 # ==========================================
 API_KEY = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=API_KEY)
-
+ 
 def get_best_model():
-    """사용 가능한 모델 중 가장 적합한 모델(Flash 우선)을 찾습니다."""
     try:
         valid_models = []
         for m in genai.list_models():
@@ -29,29 +31,20 @@ def get_best_model():
         return valid_models[0] if valid_models else "models/gemini-pro"
     except Exception:
         return "models/gemini-pro"
-
+ 
 def format_company_name(name):
-    """'주식회사' 및 텍스트 '(주)'를 모두 특수기호 '㈜'로 변환합니다."""
     if not name:
         return ""
-    # 1. '주식회사' 텍스트를 ㈜로 치환
     name = re.sub(r'주식회사\s*', '㈜', name)
     name = re.sub(r'\s*주식회사', '㈜', name)
-    
-    # 2. 텍스트 '(주)' 또는 '( 주 )' 형태를 ㈜로 치환
     name = re.sub(r'\(\s*주\s*\)\s*', '㈜', name)
     name = re.sub(r'\s*\(\s*주\s*\)', '㈜', name)
-    
-    # 3. 혹시 모를 ㈜㈜ 중복 방지
     name = name.replace('㈜㈜', '㈜')
     return name.strip()
-
+ 
 def format_region(region_str):
-    """지역명(도, 광역시 등)을 분석하여 (국내/국외 여부, 지역번호 포함 지역명)을 반환합니다."""
     if not region_str:
         return "", ""
-    
-    # 도 단위, 특별시, 광역시 등 모든 명칭 변형에 대응
     mapping_rules = [
         (["서울"], "02 서울"),
         (["부산"], "051 부산"),
@@ -71,41 +64,35 @@ def format_region(region_str):
         (["경남", "경상남도"], "055 경남"),
         (["제주"], "064 제주"),
     ]
-    
     for keys, value in mapping_rules:
         for k in keys:
             if k in region_str:
                 return "국내", value
-                
     return "", region_str
-
+ 
 def format_currency(value):
-    """금액을 천 단위 콤마(,)가 포함된 형식으로 변환합니다."""
     if not value:
         return ""
     try:
-        # 숫자가 아닌 문자(원, 콤마, 공백 등) 제거 후 정수 변환
         clean_num = re.sub(r'[^\d]', '', str(value))
         if clean_num:
             return f"{int(clean_num):,}"
     except Exception:
         pass
     return str(value)
-
+ 
 def add_months(sourcedate, months):
     month = sourcedate.month - 1 + months
     year = sourcedate.year + month // 12
     month = month % 12 + 1
     day = min(sourcedate.day, calendar.monthrange(year, month)[1])
     return datetime.date(year, month, day)
-
+ 
 def calculate_exact_period(start_date_str, period_str):
-    """계약 시작일과 기간을 바탕으로 정확한 날짜 범위를 계산합니다."""
     try:
         start_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
         year_match = re.search(r"(\d+)\s*년", period_str)
         month_match = re.search(r"(\d+)\s*(?:개월|월)", period_str)
-
         if year_match:
             end_date = add_months(start_date, int(year_match.group(1)) * 12) - datetime.timedelta(days=1)
             return f"{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}"
@@ -113,338 +100,587 @@ def calculate_exact_period(start_date_str, period_str):
             end_date = add_months(start_date, int(month_match.group(1))) - datetime.timedelta(days=1)
             return f"{start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}"
     except Exception:
-        pass 
+        pass
     return period_str
-
+ 
+# ==========================================
+# 2. Gemini 추출 함수 (계약 정보)
+# ==========================================
 def extract_with_gemini(contract_path, biz_reg_path, info_path, model_name):
-    """Gemini API를 사용하여 여러 PDF 파일에서 항목을 종합 추출합니다."""
     model = genai.GenerativeModel(model_name)
     uploaded_files = []
-    
     try:
-        # 1. 계약서 업로드
         c_file = genai.upload_file(path=contract_path)
         uploaded_files.append(c_file)
         docs_to_analyze = [c_file]
         time.sleep(2)
-        
-        # 2. 사업자등록증 업로드
         if biz_reg_path:
             b_file = genai.upload_file(path=biz_reg_path)
             uploaded_files.append(b_file)
             docs_to_analyze.append(b_file)
             time.sleep(2)
-            
-        # 3. 기술이전 정보 문서 업로드
         if info_path:
             i_file = genai.upload_file(path=info_path)
             uploaded_files.append(i_file)
             docs_to_analyze.append(i_file)
             time.sleep(2)
-
+ 
         prompt = """
-        첨부된 문서들을 종합 분석하여 아래 항목의 정보를 추출해 줘. 
-        문서의 형태(실시권 계약서, 특허 양도계약서 등)를 파악하고, 명칭이 조금 다르더라도 의미가 일치하는 정보를 정확히 찾아내야 해.
-        특히 '기술이전 정보' 문서의 내용(연구개발과제 현황 등)을 주의 깊게 분석해.
+        첨부된 문서들을 종합 분석하여 아래 항목의 정보를 추출해 줘.
         반드시 마크다운 기호 없이 순수 JSON 형식으로만 답변해야 해. 정보가 없으면 빈 문자열("") 입력.
-        
         {
             "1. 기술이전계약일": "YYYY-MM-DD",
-            "2. 회사명": "계약 상대방(양수인 또는 실시권자) 업체명",
+            "2. 회사명": "계약 상대방 업체명",
             "3. 회사 주소": "괄호 안의 건물명 제외 지번/도로명까지",
             "4. 회사 대표명": "",
             "5. 사업자등록번호": "000-00-00000",
-            "6. 지역구분": "회사 주소의 시/도 단위 (예: 서울, 부산, 경기도, 경상남도 등)",
+            "6. 지역구분": "회사 주소의 시/도 단위",
             "7. 회사 업무담당자 성명": "",
             "8. 회사 업무 담당자 이메일": "",
             "9. 회사 업무 담당자 번호": "010-0000-0000",
             "10. 기술이전계약명": "계약명 또는 발명의 명칭",
             "11. 기술이전책임자명": "주발명자명 기재",
             "12. 학과": "소속(단과대학) 또는 소속 학과",
-            "13. 기술유형": "'특허', '노하우', '자문', '저작권' 이 4개 중 하나만 선택해서 기재",
-            "14. 거래유형": "문서 제목이나 내용을 바탕으로 '독점 통상실시권', '비독점 통상실시권', '전용실시권', '특허양도' 중 정확한 형태 기재",
-            "15. 계약기간": "계약서에 명시된 계약기간 기재. 단, 양도계약서라 기간이 없으면 빈 문자열",
-            "16. 기술료 유형": "계약서 내용을 바탕으로 '정액기술료', '경상기술료', '혼합형(정액+경상)' 중 하나 기재",
-            "17. 총 정액기술료(단위: 원)": "한글 금액(예: 금오백오십만원정)이더라도 반드시 아라비아 숫자로 변환하여 기재 (콤마 제외)",
-            "18. 정액기술료 납부방법": "일시불인지, 혹은 분할 납부 스케줄과 조건이 있다면 상세히 요약 기재. 없으면 해당없음",
-            "19. 경상기술료(Running Royalty) 조건": "순매출액의 X% 등 경상기술료 조건이 명시되어 있다면 상세 기재, 없으면 '해당없음'",
-            "20. 학교 업무담당자 성명": "기술이전 담당자 또는 실무 담당자 성명 기재 (부산대학교 산학협력단 측 담당자)",
-            "21-1. 특허출원번호": "계약서나 정보 문서에 기재된 특허 출원번호만 기재, 없으면 빈 문자열",
-            "21-2. 특허등록번호": "계약서나 정보 문서에 기재된 특허 등록번호만 기재, 없으면 빈 문자열",
-            "22. 주발명자 전화번호": "기술이전 정보 문서 내 발명자 정보의 전화번호 기재",
-            "23. 주발명자 이메일": "기술이전 정보 문서 내 발명자 정보의 이메일 기재",
-            "24. 연구과제명": "기술이전 정보 문서의 '연구개발과제 현황' 표에 기재된 연구과제명",
-            "25. 대사업명": "기술이전 정보 문서의 '연구개발과제 현황' 표에 기재된 대사업명",
-            "26. 중사업명": "기술이전 정보 문서의 '연구개발과제 현황' 표에 기재된 중사업명",
-            "27. 지원기관과제번호": "연구과제번호 기재",
-            "28. 연구협약일": "연구협약일 기재",
-            "29. 정부출연금": "기술이전 정보 문서 '연구개발비' 항목의 정부출연금 숫자만 기재 (콤마 제외)",
-            "30. 총연구비": "기술이전 정보 문서의 '연구개발과제 현황' 중 '연구개발비' 항목 내 '계'에 적힌 총 합계 금액 (숫자만 기재, 콤마 제외)",
-            "31. 총연구기간": "기술이전 정보 문서의 '연구개발과제 현황' 중 '연구기간'에 기재된 전체 기간 텍스트",
-            "32. 연구책임자": "기술이전 정보 문서의 '연구개발과제 현황' 중 '연구책임자' 란에 기재된 성명",
-            "33. 수납상황": "기술이전 정보 문서 내 [표2] 중개/수납 관련 내용을 바탕으로 '업체명(비율) (담당자명, 이메일/전화번호)' 형태로 요약. 예: 기술보증기금 인천기술혁신센터(10%) (장윤지 대리, abc@def.com / 010-0000-0000)",
-            "34. 업체 비용담당자 성명": "기술이전 정보 문서 내 '비용담당자' 정보에서 성명만 추출",
-            "35. 업체 비용담당자 부서": "기술이전 정보 문서 내 '비용담당자' 정보에서 부서명 추출 (없으면 빈 문자열)",
-            "36. 업체 비용담당자 직급": "기술이전 정보 문서 내 '비용담당자' 정보에서 직급(예: 대표, 과장 등) 추출 (없으면 빈 문자열)",
-            "37. 업체 비용담당자 전화번호": "기술이전 정보 문서 내 '비용담당자' 정보에서 전화번호 추출",
-            "38. 업체 비용담당자 이메일": "기술이전 정보 문서 내 '비용담당자' 정보에서 이메일 추출"
+            "13. 기술유형": "'특허', '노하우', '자문', '저작권' 중 하나",
+            "14. 거래유형": "'독점 통상실시권', '비독점 통상실시권', '전용실시권', '특허양도' 중 하나",
+            "15. 계약기간": "계약서에 명시된 계약기간. 양도계약이면 빈 문자열",
+            "16. 기술료 유형": "'정액기술료', '경상기술료', '혼합형(정액+경상)' 중 하나",
+            "17. 총 정액기술료(단위: 원)": "아라비아 숫자로 변환 (콤마 제외)",
+            "18. 정액기술료 납부방법": "일시불 또는 분할 스케줄 상세 기재. 없으면 해당없음",
+            "19. 경상기술료(Running Royalty) 조건": "조건 상세 기재. 없으면 해당없음",
+            "20. 학교 업무담당자 성명": "산학협력단 측 담당자 성명",
+            "21-1. 특허출원번호": "",
+            "21-2. 특허등록번호": "",
+            "22. 주발명자 전화번호": "",
+            "23. 주발명자 이메일": "",
+            "24. 연구과제명": "",
+            "25. 대사업명": "",
+            "26. 중사업명": "",
+            "27. 지원기관과제번호": "",
+            "28. 연구협약일": "",
+            "29. 정부출연금": "",
+            "30. 총연구비": "",
+            "31. 총연구기간": "",
+            "32. 연구책임자": "",
+            "33. 수납상황": "",
+            "34. 업체 비용담당자 성명": "",
+            "35. 업체 비용담당자 부서": "",
+            "36. 업체 비용담당자 직급": "",
+            "37. 업체 비용담당자 전화번호": "",
+            "38. 업체 비용담당자 이메일": ""
         }
         """
         docs_to_analyze.append(prompt)
-
-        # 재시도 로직 포함 (API Limit 에러 대응)
+ 
         max_retries = 2
         for attempt in range(max_retries):
             try:
                 response = model.generate_content(docs_to_analyze, request_options={"timeout": 600})
-                break 
+                break
             except Exception as e:
                 if '429' in str(e) or 'exceeded' in str(e):
                     if attempt < max_retries - 1:
                         time.sleep(45)
                         continue
                 raise e
-
-        # JSON 텍스트 파싱
+ 
         result_text = response.text.strip()
         md_json = chr(96)*3 + "json"
         md_end = chr(96)*3
-        
-        if result_text.startswith(md_json): 
+        if result_text.startswith(md_json):
             result_text = result_text[7:]
         elif result_text.startswith(md_end):
             result_text = result_text[3:]
-            
-        if result_text.endswith(md_end): 
+        if result_text.endswith(md_end):
             result_text = result_text[:-3]
-            
+ 
         extracted_data = json.loads(result_text.strip())
-        
-        # [데이터 후처리] 주식회사 -> ㈜ 변환 적용
+ 
         if "2. 회사명" in extracted_data:
             extracted_data["2. 회사명"] = format_company_name(extracted_data["2. 회사명"])
-
-        # [데이터 후처리] 계약기간 및 특허양도 기간 계산 강화
+ 
         deal_type = extracted_data.get("14. 거래유형", "")
         start_date = extracted_data.get("1. 기술이전계약일", "")
         raw_period = extracted_data.get("15. 계약기간", "")
-
-        # '양도'가 포함된 계약일 경우 계약기간을 '특허존속기간 만료일까지'로 강제 설정
+ 
         if "양도" in deal_type:
             extracted_data["15. 계약기간"] = "특허존속기간 만료일까지"
         elif start_date and raw_period:
             if "~" not in raw_period and ("년" in raw_period or "개월" in raw_period or "월" in raw_period):
                 extracted_data["15. 계약기간"] = calculate_exact_period(start_date, raw_period)
-            
+ 
         return extracted_data
-
+ 
     except Exception as e:
         return {"10. 기술이전계약명": f"오류 발생: {e}"}
-        
     finally:
         for f in uploaded_files:
             try:
                 genai.delete_file(f.name)
             except:
                 pass
-
+ 
 # ==========================================
-# 2. 웹페이지 화면 구성 (Streamlit UI)
+# 3. Gemini 추출 함수 (기술료 분배)
 # ==========================================
-st.set_page_config(page_title="기술이전 대량 자동 추출기", page_icon="📑", layout="wide")
-
-st.title("📑 기술이전계약서 대량 일괄 추출 시스템")
-st.markdown("""
-계약서, 사업자등록증, 그리고 **기술이전 정보** 문서까지 업로드하면 AI가 상호 분석하여 엑셀 데이터를 완벽하게 정리합니다.
-* **연번 자동화 끝판왕:** 번호를 따로 입력할 필요 없습니다. 추출된 엑셀 데이터를 기존 데이터베이스의 가장 아래 줄에 붙여넣기만 하면, **알아서 바로 윗줄 번호를 읽고 다음 연번(예: 2026-050)으로 착착! 바뀝니다.**
-* **비용담당자 매핑:** 업체 비용담당자의 성명, 부서, 직급, 전화번호, 이메일이 각각 V~Z열에 올바르게 매핑됩니다.
-* **출원/등록 상태 자동 판별:** 둘 다 있으면 등록번호 우선 기입 후 "등록", 하나만 있으면 해당 번호 기입 후 상태에 반영됩니다.
-* **담당자 열(CZ열) 매핑:** 산학협력단 담당자 이름이 뒷부분 담당자(CZ열)에 완벽하게 들어갑니다.
-""")
-
-col1, col2, col3 = st.columns(3)
-with col1:
-    contract_files = st.file_uploader("1. 기술이전계약서 (PDF) 📄", type=['pdf'], accept_multiple_files=True)
-with col2:
-    biz_files = st.file_uploader("2. 사업자등록증 (PDF) 🏢", type=['pdf'], accept_multiple_files=True)
-with col3:
-    info_files = st.file_uploader("3. 기술이전 정보 (PDF) 💡", type=['pdf'], accept_multiple_files=True)
-
-st.markdown("---")
-# 연번 상대 참조 수식용 연도 입력 (기본적으로 시작 연번 입력을 생략하고 엑셀 수식에 맡김)
-st.markdown("### ⚙️ 연번(번호) 자동 생성 설정")
-target_year = st.number_input("📅 연번 앞자리 연도 (예: 2026)", min_value=2000, value=datetime.date.today().year, step=1)
-
-st.info(f"💡 생성되는 파일의 `1.연번` 열에는 **내 바로 위 셀의 숫자를 읽어와 +1을 해주는 마법의 엑셀 수식**이 적용됩니다. 붙여넣기하는 순간 기존 번호에 맞춰서 완벽하게 이어집니다!")
-
-if st.button("🚀 대량 데이터 추출 시작", use_container_width=True):
-    if not contract_files:
-        st.error("⚠️ 최소 1개 이상의 기술이전계약서 PDF를 업로드해 주세요!")
-    else:
-        model_name = get_best_model()
-        all_extracted_data = [] 
-        
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        for i, c_file in enumerate(contract_files):
-            status_text.info(f"⏳ [{i+1}/{len(contract_files)}] '{c_file.name}' 파일을 분석하고 있습니다...")
-            
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_c:
-                tmp_c.write(c_file.read())
-                c_path = tmp_c.name
-            
-            b_path = ""
-            if biz_files and len(biz_files) > i:
-                b_file = biz_files[i]
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_b:
-                    tmp_b.write(b_file.read())
-                    b_path = tmp_b.name
-                    
-            i_path = ""
-            if info_files and len(info_files) > i:
-                info_file = info_files[i]
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_i:
-                    tmp_i.write(info_file.read())
-                    i_path = tmp_i.name
-            
-            # 3가지 파일을 모두 전달하여 추출
-            data = extract_with_gemini(c_path, b_path, i_path, model_name)
-            
-            if data:
-                all_extracted_data.append(data)
-            
-            # 임시 파일 삭제
-            os.remove(c_path)
-            if b_path: os.remove(b_path)
-            if i_path: os.remove(i_path)
-            
-            progress_bar.progress((i + 1) / len(contract_files))
-            
-        status_text.success("🎉 모든 파일의 분석이 완료되었습니다!")
-        
-        # 다운로드할 엑셀의 컬럼 목록
-        target_columns = [
-            "1.연번", "2.기술이전계약일", "3.기관(업체)명", "4.기관(업체)명2", "5.기관유형", "6.업종유형",
-            "7.국내/국외", "8. 국가명(국외의 경우)", "9.국내지역구분", "10. 사업자등록번호", "11. 대표주소",
-            "12. 대표전화", "13. 대표자성명", "13-1.홈페이지", "14. 실제우편보낼주소", "15. 기술이전담당이름",
-            "16. 담당부서", "17. 직급", "18.핸드폰", "18-1.팩스", "19.이메일", "20.담당자명", "21.담당부서",
-            "22.직급", "23.핸드폰/\n전화번호", "24.이메일", "25.종업원수(상시)", "26.연매출액(단위 : 천원)",
-            "27.기술명", "28.주발명자", "28-1.교직원번호", "29.소속", "30.전공", "31.공동발명자",
-            "35-1.교직원번호", "32.소속2", "33.전공2", "34.기술유형", "35.지식재산권 번호", "36.상태(출원, 등록)",
-            "37.포함된 기술 수", "38.특허비용(산단지원금)", "39.기술분야(6T)", "40.기술분류", "41.거래유형",
-            "42.계약기간", "43.계약시작일", "44.계약종료일", "45.제한사항", "46.기술료 수취유형",
-            "47.선급기술료(단위 : 원)", "48.경상기술료", "49.정액기술료(단위:원)", "50.총 기술료(단위 : 원)",
-            "51.계약상태", "52.계약해지 사유", "53.연구과제명", "54.부처명", "55.지원기관", "56.지원사업",
-            "57.총연구비(단위:천원)", "58.총연구기간", "59. 협약일", "60.대사업명", "61.중사업명",
-            "62.지원기관과제번호", "63.ERP과제번호", "64.연구책임자", "65.공동연구자", "66.참여기업명",
-            "67.정부출연금", "68.기업(민간)부담금", "69.기타", "70.입금일", "71.입금통장명의", "72.기술료 수취유형2",
-            "73.현금입금액(공급가액)(단위:원)", "74.주식(단위:원)", "75.현물(단위:원)", "76.기타(단위:원)",
-            "77.종류", "79.선급기술료", "80.경상기술료2", "81.정액기술료", "82.분배일", "83.제반비용(특허비용)",
-            "84.제반비용(중개수수료 )", "85.전문기관", "86.발명자", "87.발명자지정기관", "88.산학협력단",
-            "88-1. 기술이전사업화경비 지식재산권 출원등록유지비", "88-2.성과활용 기여자보상금",
-            "88-3.연구개발 재투자/기관운영경비등", "89.기타(특허지분액등)", "90.해당사업단명", "91.수납상황",
-            "92.학진승인여부", "93.NTB등록여부", "94.기술가치평가여부", "95.계약변경일", "96.계약해지일",
-            "납부기한", "담당자", "담당자(연구원)"
-        ]
-
-        final_data_list = []
-        for idx, d in enumerate(all_extracted_data):
-            row_dict = {col: "" for col in target_columns}
-            
-            # [연번 마법의 수식 적용] 바로 윗줄 A열(A{idx+1})의 문자열에서 우측 3자리를 뽑아 +1을 한 뒤 "000" 형태로 다시 결합. 
-            # 에러 발생(예: 윗줄이 텍스트 제목) 시 0으로 취급하여 001부터 시작!
-            row_dict["1.연번"] = f'="{target_year}-"&TEXT(IFERROR(VALUE(RIGHT(A{idx + 1},3)),0)+1,"000")'
-            
-            row_dict["2.기술이전계약일"] = d.get("1. 기술이전계약일", "")
-            
-            row_dict["3.기관(업체)명"] = "부산대학교 산학협력단"
-            row_dict["4.기관(업체)명2"] = d.get("2. 회사명", "")
-            
-            raw_region = d.get("6. 지역구분", "")
-            dom_ovs, formatted_region = format_region(raw_region)
-            row_dict["7.국내/국외"] = dom_ovs
-            row_dict["9.국내지역구분"] = formatted_region
-            
-            row_dict["11. 대표주소"] = d.get("3. 회사 주소", "")
-            row_dict["13. 대표자성명"] = d.get("4. 회사 대표명", "")
-            row_dict["10. 사업자등록번호"] = d.get("5. 사업자등록번호", "")
-            row_dict["15. 기술이전담당이름"] = d.get("7. 회사 업무담당자 성명", "")
-            row_dict["19.이메일"] = d.get("8. 회사 업무 담당자 이메일", "")
-            
-            row_dict["18.핸드폰"] = d.get("9. 회사 업무 담당자 번호", "")
-            
-            row_dict["27.기술명"] = d.get("10. 기술이전계약명", "")
-            row_dict["28.주발명자"] = d.get("11. 기술이전책임자명", "")
-            row_dict["29.소속"] = d.get("12. 학과", "")
-            row_dict["34.기술유형"] = d.get("13. 기술유형", "")
-            row_dict["41.거래유형"] = d.get("14. 거래유형", "")
-            row_dict["42.계약기간"] = d.get("15. 계약기간", "")
-            row_dict["46.기술료 수취유형"] = d.get("16. 기술료 유형", "")
-            
-            # 금액 서식
-            row_dict["50.총 기술료(단위 : 원)"] = format_currency(d.get("17. 총 정액기술료(단위: 원)", ""))
-            row_dict["납부기한"] = d.get("18. 정액기술료 납부방법", "")
-            row_dict["48.경상기술료"] = d.get("19. 경상기술료(Running Royalty) 조건", "")
-            
-            # [비용담당자] 업체 비용담당자 정보 V~Z 열 매핑
-            row_dict["20.담당자명"] = d.get("34. 업체 비용담당자 성명", "")
-            row_dict["21.담당부서"] = d.get("35. 업체 비용담당자 부서", "")
-            row_dict["22.직급"] = d.get("36. 업체 비용담당자 직급", "")
-            row_dict["23.핸드폰/\n전화번호"] = d.get("37. 업체 비용담당자 전화번호", "")
-            row_dict["24.이메일"] = d.get("38. 업체 비용담당자 이메일", "")
-            
-            # 출원번호 및 등록번호를 기반으로 상태(출원/등록) 우선순위 적용
-            reg_no = d.get("21-2. 특허등록번호", "").strip()
-            app_no = d.get("21-1. 특허출원번호", "").strip()
-            
-            if reg_no:
-                row_dict["35.지식재산권 번호"] = reg_no
-                row_dict["36.상태(출원, 등록)"] = "등록"
-            elif app_no:
-                row_dict["35.지식재산권 번호"] = app_no
-                row_dict["36.상태(출원, 등록)"] = "출원"
-            
-            row_dict["53.연구과제명"] = d.get("24. 연구과제명", "")
-            row_dict["60.대사업명"] = d.get("25. 대사업명", "")
-            row_dict["61.중사업명"] = d.get("26. 중사업명", "")
-            row_dict["62.지원기관과제번호"] = d.get("27. 지원기관과제번호", "")
-            row_dict["59. 협약일"] = d.get("28. 연구협약일", "")
-            row_dict["67.정부출연금"] = format_currency(d.get("29. 정부출연금", ""))
-            
-            row_dict["57.총연구비(단위:천원)"] = format_currency(d.get("30. 총연구비", ""))
-            row_dict["58.총연구기간"] = d.get("31. 총연구기간", "")
-            row_dict["64.연구책임자"] = d.get("32. 연구책임자", "")
-            row_dict["91.수납상황"] = d.get("33. 수납상황", "")
-            
-            # CZ열 산학협력단 측 담당자 매핑
-            row_dict["담당자"] = d.get("20. 학교 업무담당자 성명", "")
-            
-            final_data_list.append(row_dict)
-            
-        df = pd.DataFrame(final_data_list, columns=target_columns)
-        
-        # 날짜 형식 변환
-        df["2.기술이전계약일"] = pd.to_datetime(df["2.기술이전계약일"], errors='coerce').dt.date
-
-        st.dataframe(df)
-
-        # 엑셀 파일 생성
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False, sheet_name='추출정보')
-            workbook = writer.book
-            worksheet = writer.sheets['추출정보']
-            header_format = workbook.add_format({'bold': True, 'border': 1, 'bg_color': '#D9D9D9', 'align': 'center'})
-            for col_num, value in enumerate(df.columns.values):
-                worksheet.write(0, col_num, value, header_format)
-                worksheet.set_column(col_num, col_num, 18)
-        
-        # 다운로드 버튼
-        st.download_button(
-            label="📥 마스터 엑셀 파일 다운로드 (.xlsx)",
-            data=buffer.getvalue(),
-            file_name=f"기술이전_대량추출결과_{datetime.date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+def extract_distribution_with_gemini(dist_path, model_name):
+    model = genai.GenerativeModel(model_name)
+    uploaded_files = []
+    try:
+        d_file = genai.upload_file(path=dist_path)
+        uploaded_files.append(d_file)
+        time.sleep(2)
+ 
+        prompt = """
+        첨부된 기술료 분배 문서를 분석하여 아래 항목을 추출해 줘.
+        반드시 마크다운 기호 없이 순수 JSON 형식으로만 답변해야 해. 정보가 없으면 빈 문자열("") 입력.
+        연번은 문서 제목에 포함된 연번(예: 2026-009, 2025-086 등)을 추출해.
+        입금액이 여러 번인 경우 모든 입금일과 입금액을 합산하여 기재해.
+ 
+        {
+            "연번": "문서 제목의 연번 (예: 2026-009)",
+            "입금일": "가장 마지막 입금일 YYYY-MM-DD 형식. 여러 건이면 쉼표 구분",
+            "입금액합계": "총 입금액 숫자만 (콤마 제외, 부가세 포함 금액)",
+            "분배기준액": "C=A-B 분배기준액 숫자만 (콤마 제외)",
+            "발명자보상금": "발명자(저작자) 보상금 숫자만 (콤마 제외)",
+            "지식재산권비용": "기술이전사업화경비 지식재산권 출원등록유지 금액 숫자만 (없으면 0)",
+            "성과활용기여자보상금": "성과활용 기여자 보상금 숫자만 (없으면 0)",
+            "연구개발재투자": "연구개발 재투자/기관운영경비 금액 숫자만 (없으면 0)",
+            "중개수수료": "중개수수료 금액 숫자만 (없으면 0)",
+            "특허비용공제": "특허비용공제 금액 숫자만 (없으면 0)",
+            "산학협력단분배액": "산학협력단 직접 분배액 숫자만 (자문/저작권 건에서 존재. 없으면 0)",
+            "지정기관분배액": "지정기관(교양교육원 등) 분배액 숫자만 (없으면 0)",
+            "분배일": "문서 작성일 또는 결재일 YYYY-MM-DD 형식"
+        }
+        """
+ 
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                response = model.generate_content([d_file, prompt], request_options={"timeout": 300})
+                break
+            except Exception as e:
+                if '429' in str(e) or 'exceeded' in str(e):
+                    if attempt < max_retries - 1:
+                        time.sleep(45)
+                        continue
+                raise e
+ 
+        result_text = response.text.strip()
+        md_json = chr(96)*3 + "json"
+        md_end = chr(96)*3
+        if result_text.startswith(md_json):
+            result_text = result_text[7:]
+        elif result_text.startswith(md_end):
+            result_text = result_text[3:]
+        if result_text.endswith(md_end):
+            result_text = result_text[:-3]
+ 
+        return json.loads(result_text.strip())
+ 
+    except Exception as e:
+        return {"연번": "", "오류": str(e)}
+    finally:
+        for f in uploaded_files:
+            try:
+                genai.delete_file(f.name)
+            except:
+                pass
+ 
+# ==========================================
+# 4. 총정리파일 행 추가 함수
+# ==========================================
+def append_row_to_master(master_path, extracted_data, target_year):
+    wb = load_workbook(master_path)
+    ws = wb['내역']
+ 
+    # 마지막 실제 데이터 행 찾기 (A열 연번 기준)
+    last_row = 1
+    for row in ws.iter_rows(min_row=2):
+        if row[0].value is not None:
+            last_row = row[0].row
+ 
+    new_row = last_row + 1
+ 
+    # 연번 수식 (바로 윗줄 A열 기준)
+    ws.cell(row=new_row, column=1).value = f'="{target_year}-"&TEXT(IFERROR(VALUE(RIGHT(A{last_row},3)),0)+1,"000")'
+ 
+    # 컬럼 헤더 → 열 번호 매핑
+    headers = {}
+    for cell in ws[1]:
+        if cell.value:
+            headers[str(cell.value).strip()] = cell.column
+ 
+    def set_col(header_keyword, value):
+        for h, col in headers.items():
+            if header_keyword in h:
+                ws.cell(row=new_row, column=col).value = value
+                return
+ 
+    d = extracted_data
+ 
+    # 계약 기본 정보
+    contract_date = d.get("1. 기술이전계약일", "")
+    if contract_date:
+        try:
+            ws.cell(row=new_row, column=2).value = datetime.datetime.strptime(contract_date, "%Y-%m-%d").date()
+        except:
+            ws.cell(row=new_row, column=2).value = contract_date
+ 
+    ws.cell(row=new_row, column=3).value = "부산대학교 산학협력단"
+    ws.cell(row=new_row, column=4).value = d.get("2. 회사명", "")
+ 
+    raw_region = d.get("6. 지역구분", "")
+    dom_ovs, formatted_region = format_region(raw_region)
+    set_col("7.국내", dom_ovs)
+    set_col("9.국내지역", formatted_region)
+    set_col("10. 사업자", d.get("5. 사업자등록번호", ""))
+    set_col("11. 대표주소", d.get("3. 회사 주소", ""))
+    set_col("13. 대표자성명", d.get("4. 회사 대표명", ""))
+    set_col("15. 기술이전담당", d.get("7. 회사 업무담당자 성명", ""))
+    set_col("19.이메일", d.get("8. 회사 업무 담당자 이메일", ""))
+    set_col("18.핸드폰", d.get("9. 회사 업무 담당자 번호", ""))
+    set_col("27.기술명", d.get("10. 기술이전계약명", ""))
+    set_col("28.주발명자", d.get("11. 기술이전책임자명", ""))
+    set_col("29.소속", d.get("12. 학과", ""))
+    set_col("34.기술유형", d.get("13. 기술유형", ""))
+    set_col("41.거래유형", d.get("14. 거래유형", ""))
+    set_col("42.계약기간", d.get("15. 계약기간", ""))
+    set_col("46.기술료 수취유형", d.get("16. 기술료 유형", ""))
+    set_col("50.총 기술료", format_currency(d.get("17. 총 정액기술료(단위: 원)", "")))
+    set_col("납부기한", d.get("18. 정액기술료 납부방법", ""))
+    set_col("48.경상기술료", d.get("19. 경상기술료(Running Royalty) 조건", ""))
+ 
+    # 비용담당자
+    set_col("20.담당자명", d.get("34. 업체 비용담당자 성명", ""))
+    set_col("21.담당부서", d.get("35. 업체 비용담당자 부서", ""))
+    set_col("22.직급", d.get("36. 업체 비용담당자 직급", ""))
+    set_col("23.핸드폰/", d.get("37. 업체 비용담당자 전화번호", ""))
+    set_col("24.이메일", d.get("38. 업체 비용담당자 이메일", ""))
+ 
+    # 지식재산권 번호/상태
+    reg_no = d.get("21-2. 특허등록번호", "").strip()
+    app_no = d.get("21-1. 특허출원번호", "").strip()
+    if reg_no:
+        set_col("35.지식재산권 번호", reg_no)
+        set_col("36.상태", "등록")
+    elif app_no:
+        set_col("35.지식재산권 번호", app_no)
+        set_col("36.상태", "출원")
+ 
+    # 연구과제 정보
+    set_col("53.연구과제명", d.get("24. 연구과제명", ""))
+    set_col("60.대사업명", d.get("25. 대사업명", ""))
+    set_col("61.중사업명", d.get("26. 중사업명", ""))
+    set_col("62.지원기관과제번호", d.get("27. 지원기관과제번호", ""))
+    set_col("59. 협약일", d.get("28. 연구협약일", ""))
+    set_col("67.정부출연금", format_currency(d.get("29. 정부출연금", "")))
+    set_col("57.총연구비", format_currency(d.get("30. 총연구비", "")))
+    set_col("58.총연구기간", d.get("31. 총연구기간", ""))
+    set_col("64.연구책임자", d.get("32. 연구책임자", ""))
+    set_col("91.수납상황", d.get("33. 수납상황", ""))
+ 
+    # 담당자
+    set_col("담당자", d.get("20. 학교 업무담당자 성명", ""))
+ 
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
+ 
+# ==========================================
+# 5. 총정리파일 분배 업데이트 함수
+# ==========================================
+def update_distribution_in_master(master_path, dist_data_list):
+    wb = load_workbook(master_path)
+    ws = wb['내역']
+ 
+    # 헤더 → 열 번호 매핑
+    headers = {}
+    for cell in ws[1]:
+        if cell.value:
+            headers[str(cell.value).strip()] = cell.column
+ 
+    def get_col(keyword):
+        for h, col in headers.items():
+            if keyword in h:
+                return col
+        return None
+ 
+    # 연번 → 행 번호 매핑 (A열 기준)
+    serial_to_rows = {}
+    for row in ws.iter_rows(min_row=2):
+        val = row[0].value
+        if val and isinstance(val, str) and re.match(r'\d{4}-\d{3}', val):
+            serial = val.strip()
+            if serial not in serial_to_rows:
+                serial_to_rows[serial] = []
+            serial_to_rows[serial].append(row[0].row)
+ 
+    results = []
+    for dist_data in dist_data_list:
+        serial = dist_data.get("연번", "").strip()
+        if not serial:
+            results.append({"연번": "연번 추출 실패", "상태": "❌ 실패"})
+            continue
+ 
+        if serial not in serial_to_rows:
+            results.append({"연번": serial, "상태": f"❌ 총정리파일에서 '{serial}' 행을 찾지 못함"})
+            continue
+ 
+        target_rows = serial_to_rows[serial]
+ 
+        def safe_int(val):
+            try:
+                return int(re.sub(r'[^\d]', '', str(val))) if val else 0
+            except:
+                return 0
+ 
+        # 입금일 처리
+        입금일_raw = dist_data.get("입금일", "")
+        입금일_val = 입금일_raw  # 그대로 문자열로 저장
+ 
+        for r in target_rows:
+            col = get_col("70.입금일")
+            if col:
+                ws.cell(row=r, column=col).value = 입금일_val
+ 
+            col = get_col("73.현금입금액")
+            if col:
+                ws.cell(row=r, column=col).value = safe_int(dist_data.get("입금액합계"))
+ 
+            col = get_col("83.제반비용\n(특허비용)")
+            if col:
+                ws.cell(row=r, column=col).value = safe_int(dist_data.get("특허비용공제"))
+ 
+            col = get_col("84.제반비용\n(중개수수료")
+            if col:
+                ws.cell(row=r, column=col).value = safe_int(dist_data.get("중개수수료"))
+ 
+            col = get_col("86.발명자")
+            if col:
+                ws.cell(row=r, column=col).value = safe_int(dist_data.get("발명자보상금"))
+ 
+            col = get_col("88.산학협력단")
+            if col:
+                ws.cell(row=r, column=col).value = safe_int(dist_data.get("산학협력단분배액"))
+ 
+            col = get_col("88-1.")
+            if col:
+                ws.cell(row=r, column=col).value = safe_int(dist_data.get("지식재산권비용"))
+ 
+            col = get_col("88-2.")
+            if col:
+                ws.cell(row=r, column=col).value = safe_int(dist_data.get("성과활용기여자보상금"))
+ 
+            col = get_col("88-3.")
+            if col:
+                ws.cell(row=r, column=col).value = safe_int(dist_data.get("연구개발재투자"))
+ 
+            col = get_col("82.분배일")
+            if col:
+                ws.cell(row=r, column=col).value = dist_data.get("분배일", "")
+ 
+        results.append({"연번": serial, "상태": f"✅ {len(target_rows)}행 업데이트 완료"})
+ 
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue(), results
+ 
+# ==========================================
+# 6. Streamlit UI
+# ==========================================
+st.set_page_config(page_title="기술이전 통합 관리 시스템", page_icon="📑", layout="wide")
+st.title("📑 기술이전 통합 자동화 시스템")
+ 
+tab1, tab2 = st.tabs(["📄 1단계: 계약 추출 → 총정리파일 추가", "💰 2단계: 기술료 분배 업데이트"])
+ 
+# ==========================================
+# TAB 1: 계약 추출
+# ==========================================
+with tab1:
+    st.markdown("""
+    계약서·사업자등록증·기술이전정보 PDF와 **기존 기술이전총정리파일**을 함께 업로드하면,
+    AI가 내용을 추출하여 총정리파일 마지막 행에 자동으로 추가합니다.
+    """)
+ 
+    col1, col2 = st.columns(2)
+    with col1:
+        master_file_tab1 = st.file_uploader(
+            "📊 기술이전 총정리파일 (.xlsx)", type=['xlsx'], key="master1"
         )
+        target_year = st.number_input(
+            "📅 연번 연도", min_value=2000, value=datetime.date.today().year, step=1
+        )
+    with col2:
+        st.info("💡 연번은 총정리파일의 마지막 연번에서 자동으로 +1됩니다.")
+ 
+    st.markdown("---")
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        contract_files = st.file_uploader(
+            "1. 기술이전계약서 (PDF) 📄", type=['pdf'], accept_multiple_files=True, key="contract"
+        )
+    with col_b:
+        biz_files = st.file_uploader(
+            "2. 사업자등록증 (PDF) 🏢", type=['pdf'], accept_multiple_files=True, key="biz"
+        )
+    with col_c:
+        info_files = st.file_uploader(
+            "3. 기술이전 정보 (PDF) 💡", type=['pdf'], accept_multiple_files=True, key="info"
+        )
+ 
+    if st.button("🚀 추출 시작 → 총정리파일에 추가", use_container_width=True, key="btn1"):
+        if not master_file_tab1:
+            st.error("⚠️ 기술이전 총정리파일을 업로드해 주세요!")
+        elif not contract_files:
+            st.error("⚠️ 최소 1개 이상의 계약서 PDF를 업로드해 주세요!")
+        else:
+            model_name = get_best_model()
+ 
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_master:
+                tmp_master.write(master_file_tab1.read())
+                master_path = tmp_master.name
+ 
+            all_extracted = []
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+ 
+            for i, c_file in enumerate(contract_files):
+                status_text.info(f"⏳ [{i+1}/{len(contract_files)}] '{c_file.name}' 분석 중...")
+ 
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_c:
+                    tmp_c.write(c_file.read())
+                    c_path = tmp_c.name
+ 
+                b_path = ""
+                if biz_files and len(biz_files) > i:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_b:
+                        tmp_b.write(biz_files[i].read())
+                        b_path = tmp_b.name
+ 
+                i_path = ""
+                if info_files and len(info_files) > i:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_i:
+                        tmp_i.write(info_files[i].read())
+                        i_path = tmp_i.name
+ 
+                data = extract_with_gemini(c_path, b_path, i_path, model_name)
+                all_extracted.append(data)
+ 
+                os.remove(c_path)
+                if b_path: os.remove(b_path)
+                if i_path: os.remove(i_path)
+ 
+                progress_bar.progress((i + 1) / len(contract_files))
+ 
+            status_text.info("📝 총정리파일에 데이터 추가 중...")
+ 
+            current_master_path = master_path
+            for data in all_extracted:
+                updated_bytes = append_row_to_master(current_master_path, data, target_year)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_out:
+                    tmp_out.write(updated_bytes)
+                    current_master_path = tmp_out.name
+ 
+            with open(current_master_path, 'rb') as f:
+                final_bytes = f.read()
+ 
+            os.remove(master_path)
+ 
+            status_text.success(f"🎉 {len(all_extracted)}건 추출 완료! 총정리파일에 추가되었습니다.")
+ 
+            # 미리보기
+            preview_data = []
+            for d in all_extracted:
+                preview_data.append({
+                    "기술이전계약명": d.get("10. 기술이전계약명", ""),
+                    "회사명": d.get("2. 회사명", ""),
+                    "계약일": d.get("1. 기술이전계약일", ""),
+                    "거래유형": d.get("14. 거래유형", ""),
+                    "기술유형": d.get("13. 기술유형", ""),
+                })
+            st.dataframe(pd.DataFrame(preview_data), use_container_width=True)
+ 
+            today = datetime.date.today().strftime("%Y%m%d")
+            st.download_button(
+                label="📥 업데이트된 기술이전총정리파일 다운로드",
+                data=final_bytes,
+                file_name=f"기술이전총정리_{today}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+ 
+# ==========================================
+# TAB 2: 기술료 분배 업데이트
+# ==========================================
+with tab2:
+    st.markdown("""
+    기술료 입금 완료 후, **분배 PDF**와 **기술이전총정리파일**을 업로드하면
+    연번을 기준으로 해당 행의 분배 관련 열을 자동으로 업데이트합니다.
+    
+    - 분배 PDF는 여러 건을 한꺼번에 업로드 가능합니다.
+    - 업데이트 대상 열: `70.입금일`, `73.현금입금액`, `82.분배일`, `83.특허비용`, `84.중개수수료`, `86.발명자`, `88.산학협력단`, `88-1`, `88-2`, `88-3`
+    """)
+ 
+    col1, col2 = st.columns(2)
+    with col1:
+        master_file_tab2 = st.file_uploader(
+            "📊 기술이전 총정리파일 (.xlsx)", type=['xlsx'], key="master2"
+        )
+    with col2:
+        dist_files = st.file_uploader(
+            "💰 기술료 분배 PDF (여러 건 가능)", type=['pdf'],
+            accept_multiple_files=True, key="dist"
+        )
+ 
+    if st.button("🔄 분배 데이터 업데이트 시작", use_container_width=True, key="btn2"):
+        if not master_file_tab2:
+            st.error("⚠️ 기술이전 총정리파일을 업로드해 주세요!")
+        elif not dist_files:
+            st.error("⚠️ 분배 PDF를 최소 1개 이상 업로드해 주세요!")
+        else:
+            model_name = get_best_model()
+ 
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_master:
+                tmp_master.write(master_file_tab2.read())
+                master_path = tmp_master.name
+ 
+            all_dist_data = []
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+ 
+            for i, d_file in enumerate(dist_files):
+                status_text.info(f"⏳ [{i+1}/{len(dist_files)}] '{d_file.name}' 분석 중...")
+ 
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_d:
+                    tmp_d.write(d_file.read())
+                    d_path = tmp_d.name
+ 
+                dist_data = extract_distribution_with_gemini(d_path, model_name)
+                all_dist_data.append(dist_data)
+ 
+                os.remove(d_path)
+                progress_bar.progress((i + 1) / len(dist_files))
+ 
+            status_text.info("📝 총정리파일 분배 열 업데이트 중...")
+            updated_bytes, results = update_distribution_in_master(master_path, all_dist_data)
+            os.remove(master_path)
+ 
+            status_text.success("🎉 분배 데이터 업데이트 완료!")
+ 
+            # 결과 표시
+            st.markdown("### 📋 업데이트 결과")
+            for r in results:
+                if "✅" in r["상태"]:
+                    st.success(f"연번 **{r['연번']}** — {r['상태']}")
+                else:
+                    st.error(f"연번 **{r['연번']}** — {r['상태']}")
+ 
+            today = datetime.date.today().strftime("%Y%m%d")
+            st.download_button(
+                label="📥 분배 업데이트된 기술이전총정리파일 다운로드",
+                data=updated_bytes,
+                file_name=f"기술이전총정리_분배업데이트_{today}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
