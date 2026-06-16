@@ -295,7 +295,7 @@ def extract_distribution_with_gemini(dist_path, model_name):
 # 4. 총정리파일 행 추가 함수
 # ==========================================
 def append_row_to_master(master_path, extracted_data, target_year):
-    wb = load_workbook(master_path)
+    wb = load_workbook(master_path, keep_links=False)
     ws = wb['내역']
  
     # 마지막 실제 데이터 행 찾기
