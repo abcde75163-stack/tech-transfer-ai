@@ -512,6 +512,13 @@ with tab1:
     계약서·사업자등록증·기술이전정보 PDF와 **기존 기술이전총정리파일**을 함께 업로드하면,
     AI가 내용을 추출하여 총정리파일 마지막 행에 자동으로 추가합니다.
     """)
+    st.warning("""
+    ⚠️ **여러 건 업로드 시 반드시 아래 순서를 지켜주세요!**
+    
+    계약서 / 사업자등록증 / 기술이전정보는 **같은 순서**로 업로드해야 올바르게 매칭됩니다.
+    
+    예) A건 계약서 → B건 계약서 순으로 올렸다면, 사업자등록증도 A건 → B건, 기술이전정보도 A건 → B건 순으로 올려주세요.
+    """)
  
     col1, col2 = st.columns(2)
     with col1:
@@ -528,15 +535,15 @@ with tab1:
     col_a, col_b, col_c = st.columns(3)
     with col_a:
         contract_files = st.file_uploader(
-            "1. 기술이전계약서 (PDF) 📄", type=['pdf'], accept_multiple_files=True, key="contract"
+            "1. 기술이전계약서 (PDF) 📄\n여러 건은 순서대로 업로드", type=['pdf'], accept_multiple_files=True, key="contract"
         )
     with col_b:
         biz_files = st.file_uploader(
-            "2. 사업자등록증 (PDF) 🏢", type=['pdf'], accept_multiple_files=True, key="biz"
+            "2. 사업자등록증 (PDF) 🏢\n계약서와 동일한 순서로 업로드", type=['pdf'], accept_multiple_files=True, key="biz"
         )
     with col_c:
         info_files = st.file_uploader(
-            "3. 기술이전 정보 (PDF) 💡", type=['pdf'], accept_multiple_files=True, key="info"
+            "3. 기술이전 정보 (PDF) 💡\n계약서와 동일한 순서로 업로드", type=['pdf'], accept_multiple_files=True, key="info"
         )
  
     if st.button("🚀 추출 시작 → 총정리파일에 추가", use_container_width=True, key="btn1"):
